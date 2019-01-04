@@ -5,12 +5,14 @@ import (
 	"reflect"
 	"syscall"
 	"unsafe"
+
+	"github.com/willf/bitset"
 )
 
-var objectsPerSlab uint8 = 10
+var objectsPerSlab uint8 = 100
 
 type slab struct {
-	free freeList
+	free *bitset.BitSet
 	data []byte
 }
 type objectID struct {
@@ -30,18 +32,18 @@ type sizedPool struct {
 // the first return value is the objectID of the added object,
 // the second value is the error in case one occurred
 func (s *sizedPool) add(obj []byte) (objectID, error) {
-	var pos uint8
+	var pos uint
 	var success bool
 	var slabId int
 	for i, s := range s.slabs {
-		pos, success = s.free.getFree()
+		pos, success = s.free.NextClear(0)
 		if success {
 			slabId = i
 			break
 		}
 	}
 	id := objectID{
-		objectPos: pos,
+		objectPos: uint8(pos),
 	}
 	var err error
 	if !success {
@@ -52,7 +54,7 @@ func (s *sizedPool) add(obj []byte) (objectID, error) {
 	}
 
 	slab := s.slabs[slabId]
-	slab.free.setUsed(pos)
+	slab.free.Set(pos)
 	offset := uint16(pos) * uint16(s.objSize)
 	for i := uint16(0); i < uint16(s.objSize); i++ {
 		slab.data[i+offset] = obj[i]
@@ -77,7 +79,7 @@ func (s *sizedPool) search(searching []byte) (objectID, bool) {
 		objSize := int(s.objSize)
 	OBJECT:
 		for i := uint8(0); i < objectsPerSlab; i++ {
-			if slab.free.isUsed(i) {
+			if slab.free.Test(uint(i)) {
 				offset = int(i) * objSize
 				obj := slab.data[offset : offset+objSize]
 				for j := uint8(0); j < s.objSize; j++ {
@@ -109,7 +111,7 @@ func (s *sizedPool) get(obj objectID) ([]byte, bool) {
 	}
 
 	slab := s.slabs[slabId]
-	if !slab.free.isUsed(obj.objectPos) {
+	if !slab.free.Test(uint(obj.objectPos)) {
 		return nil, false
 	}
 
@@ -126,7 +128,7 @@ func (s *sizedPool) addSlab() (int, error) {
 	}
 	s.slabs = append(s.slabs, slab{
 		data: data,
-		free: newFreeList(objectsPerSlab),
+		free: bitset.New(uint(objectsPerSlab)),
 	})
 	return len(s.slabs) - 1, nil
 }
@@ -158,9 +160,9 @@ func (s *sizedPool) delete(obj objectID) error {
 		return fmt.Errorf("Delete failed: Object ID %d is outside of valid range 0-%d", obj.objectPos, int(obj.objectPos)*int(s.objSize))
 	}
 
-	slab.free.setFree(obj.objectPos)
+	slab.free.Clear(uint(obj.objectPos))
 
-	if slab.free.isEmpty() {
+	if slab.free.None() {
 		err := s.deleteSlab(slabId)
 		if err != nil {
 			return err

@@ -46,7 +46,7 @@ func TestAddingSearchingObject(t *testing.T) {
 		Convey("we should be able to find it with the search method", func() {
 			result1, success = sp.search([]byte(testString))
 			So(success, ShouldBeTrue)
-			So(sp.slabs[0].free.isUsed(result1.objectPos), ShouldBeTrue)
+			So(sp.slabs[0].free.Test(uint(result1.objectPos)), ShouldBeTrue)
 			So(result1.slabAddr, ShouldEqual, reflect.ValueOf(sp.slabs[0].data).Pointer())
 		})
 	})
@@ -56,7 +56,7 @@ func TestAddingSearchingObject(t *testing.T) {
 		Convey("we should also be able to find it", func() {
 			result2, success = sp.search([]byte(testString2))
 			So(success, ShouldBeTrue)
-			So(sp.slabs[0].free.isUsed(result2.objectPos), ShouldBeTrue)
+			So(sp.slabs[0].free.Test(uint(result2.objectPos)), ShouldBeTrue)
 			So(result2.slabAddr, ShouldEqual, reflect.ValueOf(sp.slabs[0].data).Pointer())
 		})
 	})
