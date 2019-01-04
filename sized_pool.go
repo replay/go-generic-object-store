@@ -1,6 +1,9 @@
 package main
 
-import "syscall"
+import (
+	"bytes"
+	"syscall"
+)
 
 var objectsPerSlab uint8 = 100
 
@@ -35,22 +38,35 @@ func (s *sizedPool) add(obj []byte) ([]byte, error) {
 	}
 
 	s.slabs[slabId].free.setUsed(pos)
-	offset := pos * s.objSize
-	for i := uint8(0); i < s.objSize; i++ {
+	offset := int(pos) * int(s.objSize)
+	for i := 0; i < int(s.objSize); i++ {
 		s.slabs[slabId].data[i+offset] = obj[i]
 	}
 
-	return s.slabs[slabId].data[offset : offset+s.objSize], nil
+	return s.slabs[slabId].data[offset : offset+int(s.objSize)], nil
+}
+
+func (s *sizedPool) search(searching []byte) ([]byte, bool) {
+	for _, slab := range s.slabs {
+		for i := uint8(0); i < objectsPerSlab; i++ {
+			offset := i * s.objSize
+			obj := slab.data[offset : offset+s.objSize]
+			if slab.free.isUsed(i) && bytes.Equal(searching, obj) {
+				return obj, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (s *sizedPool) addSlab() (int, error) {
-	data, err := syscall.Mmap(-1, 0, int(s.objSize*objectsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(objectsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return 0, err
 	}
 	s.slabs = append(s.slabs, slab{
 		data: data,
-		free: newFreeList(),
+		free: newFreeList(objectsPerSlab),
 	})
 	return len(s.slabs) - 1, nil
 }
