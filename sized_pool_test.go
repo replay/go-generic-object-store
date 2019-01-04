@@ -95,8 +95,8 @@ func TestDeletingAddedObjects(t *testing.T) {
 			So(returnedValue, ShouldResemble, []byte(testValue))
 
 			Convey("Then we delete that object by id", func() {
-				success = sp.delete(idFromAdd)
-				So(success, ShouldBeTrue)
+				err = sp.delete(idFromAdd)
+				So(err, ShouldBeNil)
 
 				Convey("now we we should not be able to retrieve it by searching for the value", func() {
 					_, success := sp.search([]byte(testValue))
