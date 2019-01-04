@@ -49,13 +49,14 @@ func (s *sizedPool) add(obj []byte) (objectID, error) {
 		}
 	}
 
-	s.slabs[slabId].free.setUsed(pos)
+	slab := s.slabs[slabId]
+	slab.free.setUsed(pos)
 	offset := int(pos) * int(s.objSize)
 	for i := 0; i < int(s.objSize); i++ {
-		s.slabs[slabId].data[i+offset] = obj[i]
+		slab.data[i+offset] = obj[i]
 	}
 
-	id.slabAddr = reflect.ValueOf(s.slabs[slabId].data).Pointer()
+	id.slabAddr = reflect.ValueOf(slab.data).Pointer()
 	return id, nil
 }
 
@@ -70,13 +71,15 @@ func (s *sizedPool) search(searching []byte) (objectID, bool) {
 	}
 
 	for _, slab := range s.slabs {
+		offset := 0
+		objSize := int(s.objSize)
 	OBJECT:
 		for i := uint8(0); i < objectsPerSlab; i++ {
-			offset := i * s.objSize
 			if slab.free.isUsed(i) {
-				obj := slab.data[offset : offset+s.objSize]
-				for i := range obj {
-					if obj[i] != searching[i] {
+				offset = int(i) * objSize
+				obj := slab.data[offset : offset+objSize]
+				for j := uint8(0); j < s.objSize; j++ {
+					if obj[j] != searching[j] {
 						continue OBJECT
 					}
 				}
