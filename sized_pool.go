@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"reflect"
 	"syscall"
+	"unsafe"
 )
 
 var objectsPerSlab uint8 = 10
@@ -51,8 +53,8 @@ func (s *sizedPool) add(obj []byte) (objectID, error) {
 
 	slab := s.slabs[slabId]
 	slab.free.setUsed(pos)
-	offset := int(pos) * int(s.objSize)
-	for i := 0; i < int(s.objSize); i++ {
+	offset := uint16(pos) * uint16(s.objSize)
+	for i := uint16(0); i < uint16(s.objSize); i++ {
 		slab.data[i+offset] = obj[i]
 	}
 
@@ -129,30 +131,50 @@ func (s *sizedPool) addSlab() (int, error) {
 	return len(s.slabs) - 1, nil
 }
 
+func (s *sizedPool) deleteSlab(slabId int) error {
+	if slabId >= len(s.slabs) {
+		return fmt.Errorf("Delete failed: Slab %d does not exist", slabId)
+	}
+	slab := s.slabs[slabId]
+	err := syscall.Munmap(slab.data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // delete takes an objectID and deletes it from the sizedPool
 // on success it returns true, otherwise false
-func (s *sizedPool) delete(obj objectID) bool {
+func (s *sizedPool) delete(obj objectID) error {
 	slabId := s.getSlabId(obj.slabAddr)
 	if slabId < 0 {
-		return false
+		return fmt.Errorf("Delete failed: SlabID %d does not exist", obj.slabAddr)
 	}
 
 	slab := s.slabs[slabId]
 
 	// verify that the given arguments refer to an object within the size of the data slice
 	if len(slab.data) <= int(obj.objectPos)*int(s.objSize) {
-		return false
+		return fmt.Errorf("Delete failed: Object ID %d is outside of valid range 0-%d", obj.objectPos, int(obj.objectPos)*int(s.objSize))
 	}
 
 	slab.free.setFree(obj.objectPos)
-	return true
+
+	if slab.free.isEmpty() {
+		err := s.deleteSlab(slabId)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // getSlabId looks up the ID for the slab referred to by a given pointer
 // the pointer must point at the first element of the slabs data slice
 func (s *sizedPool) getSlabId(addr uintptr) int {
 	for i, s := range s.slabs {
-		if reflect.ValueOf(s.data).Pointer() == addr {
+		if (uintptr)(unsafe.Pointer(&s.data[0])) == addr {
 			return i
 		}
 	}
