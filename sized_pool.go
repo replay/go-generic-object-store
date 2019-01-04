@@ -5,7 +5,7 @@ import (
 	"syscall"
 )
 
-var objectsPerSlab uint8 = 100
+var objectsPerSlab uint8 = 10
 
 type slab struct {
 	free freeList
@@ -107,6 +107,10 @@ func (s *sizedPool) get(obj objectID) ([]byte, bool) {
 	}
 
 	slab := s.slabs[slabId]
+	if !slab.free.isUsed(obj.objectPos) {
+		return nil, false
+	}
+
 	offset := int(obj.objectPos) * int(s.objSize)
 
 	return slab.data[offset : offset+int(s.objSize)], true
