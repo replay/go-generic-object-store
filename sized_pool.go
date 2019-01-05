@@ -21,9 +21,17 @@ func (s *slab) addr() SlabAddr {
 	return SlabAddr(unsafe.Pointer(&s.data[0]))
 }
 
-type sizedPool struct {
-	slabs   []slab
-	objSize uint8
+type slabPool struct {
+	slabs       []slab
+	objSize     uint8
+	objsPerSlab uint8
+}
+
+func NewSlabPool(objSize, objsPerSlab uint8) slabPool {
+	return slabPool{
+		objSize:     objSize,
+		objsPerSlab: objsPerSlab,
+	}
 }
 
 // add adds an object to the pool
@@ -32,7 +40,7 @@ type sizedPool struct {
 // slab and then use that one.
 // the first return value is the objectID of the added object,
 // the second value is the error in case one occurred
-func (s *sizedPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
+func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
 	var usedSlab slab
 	var pos uint
@@ -64,19 +72,19 @@ func (s *sizedPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	return newObjAddr, newSlabAddr, nil
 }
 
-func (s *sizedPool) findSlabByObjAddr(obj ObjAddr) int {
+func (s *slabPool) findSlabByObjAddr(obj ObjAddr) int {
 	return sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() <= obj })
 }
 
 // addSlab adds another slab to the pool and initalizes the related structs
-func (s *sizedPool) addSlab() (int, error) {
-	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(objectsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+func (s *slabPool) addSlab() (int, error) {
+	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(s.objsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return 0, err
 	}
 	newSlab := slab{
 		data: data,
-		free: bitset.New(uint(objectsPerSlab)),
+		free: bitset.New(uint(s.objsPerSlab)),
 	}
 	newSlabAddr := newSlab.addr()
 
@@ -93,7 +101,7 @@ func (s *sizedPool) addSlab() (int, error) {
 // the slab's objectSize.
 // When found it returns the objectID and true,
 // otherwise the second returned value will be false
-func (s *sizedPool) search(searching []byte) (ObjAddr, bool) {
+func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	if len(searching) != int(s.objSize) {
 		return 0, false
 	}
@@ -102,7 +110,7 @@ func (s *sizedPool) search(searching []byte) (ObjAddr, bool) {
 		offset := 0
 		objSize := int(s.objSize)
 	OBJECT:
-		for i := uint8(0); i < objectsPerSlab; i++ {
+		for i := uint8(0); i < s.objsPerSlab; i++ {
 			if slab.free.Test(uint(i)) {
 				offset = int(i) * objSize
 				obj := slab.data[offset : offset+objSize]
@@ -111,7 +119,7 @@ func (s *sizedPool) search(searching []byte) (ObjAddr, bool) {
 						continue OBJECT
 					}
 				}
-				return ObjAddr(unsafe.Pointer(&obj)), true
+				return ObjAddr(unsafe.Pointer(&obj[0])), true
 			}
 		}
 	}
@@ -121,7 +129,7 @@ func (s *sizedPool) search(searching []byte) (ObjAddr, bool) {
 // get retreives and object of the given objectID
 // the second returned value is true if the object was found,
 // otherwise it's false
-func (s *sizedPool) get(obj ObjAddr) []byte {
+func (s *slabPool) get(obj ObjAddr) []byte {
 	var res []byte
 	sh := (*reflect.SliceHeader)(unsafe.Pointer(&res))
 	sh.Data = obj
@@ -130,21 +138,29 @@ func (s *sizedPool) get(obj ObjAddr) []byte {
 	return res
 }
 
-func (s *sizedPool) deleteSlab(slabId int) error {
+func (s *slabPool) deleteSlab(slabId int) error {
 	if slabId >= len(s.slabs) {
 		return fmt.Errorf("Delete failed: Slab %d does not exist", slabId)
 	}
-	slab := s.slabs[slabId]
-	err := syscall.Munmap(slab.data)
+
+	// unmap the data slice of the slab at slabId
+	currentSlab := s.slabs[slabId]
+	err := syscall.Munmap(currentSlab.data)
 	if err != nil {
 		return err
 	}
+
+	// delete the slab at slabId from the slice of slabs
+	copy(s.slabs[slabId:], s.slabs[slabId+1:])
+	s.slabs[len(s.slabs)-1] = slab{}
+	s.slabs = s.slabs[:len(s.slabs)-1]
+
 	return nil
 }
 
-// delete takes an objectID and deletes it from the sizedPool
+// delete takes an objectID and deletes it from the slabPool
 // on success it returns true, otherwise false
-func (s *sizedPool) delete(obj ObjAddr) error {
+func (s *slabPool) delete(obj ObjAddr) error {
 	slabId := s.findSlabByObjAddr(obj)
 	if slabId < 0 || slabId >= len(s.slabs) {
 		return fmt.Errorf("Delete failed: SlabID for object could not be found")
@@ -152,7 +168,7 @@ func (s *sizedPool) delete(obj ObjAddr) error {
 
 	slab := s.slabs[slabId]
 	objPos := uint(obj-slab.addr()) / uint(s.objSize)
-	if objPos >= uint(objectsPerSlab) {
+	if objPos >= uint(s.objsPerSlab) {
 		return fmt.Errorf("Delete failed: Could not calculate position of object")
 	}
 	slab.free.Clear(objPos)

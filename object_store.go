@@ -5,11 +5,11 @@ import (
 	"sort"
 )
 
-// ObjectStore contains a map of sizedPools indexed by the size of the objects stored in each pool
+// ObjectStore contains a map of slabPools indexed by the size of the objects stored in each pool
 // It also contains a lookup table which is a slice of slabInfos
 // lookupTable is kept sorted in descending order and updated whenever a slab is created or deleted
 type ObjectStore struct {
-	slabPools   map[uint8]sizedPool
+	slabPools   map[uint8]slabPool
 	lookupTable []slabInfo
 }
 
@@ -68,7 +68,7 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 
 // addSlabPool adds a slab pool of the specified size to this object store
 func (o *ObjectStore) addSlabPool(size uint8) {
-	o.slabPools[size] = sizedPool{objSize: size}
+	o.slabPools[size] = slabPool{objSize: size}
 }
 
 // Search searches for the given value in the accordingly sized slab pool
