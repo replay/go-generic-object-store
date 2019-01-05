@@ -38,8 +38,10 @@ func NewSlabPool(objSize, objsPerSlab uint8) slabPool {
 // it will try to find a free object slot for the given object, to avoid
 // unnecessary allocations. if it can't find a free slot, it will add a
 // slab and then use that one.
-// the first return value is the objectID of the added object,
-// the second value is the error in case one occurred
+// the first return value is the ObjAddr of the added object.
+// the second value is set to the slab address if the call created a new slab
+// if no new slab has been created, then the second value is 0.
+// the third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
 	var usedSlab slab
@@ -72,11 +74,17 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	return newObjAddr, newSlabAddr, nil
 }
 
+// findSlabByObjAddr takes an object address and finds the correct slab
+// where this object is in by looking it up from its slab list
+// it returns the slab index if the correct slab was found, otherwise
+// the return value will be set to the number of known slabs
 func (s *slabPool) findSlabByObjAddr(obj ObjAddr) int {
 	return sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() <= obj })
 }
 
 // addSlab adds another slab to the pool and initalizes the related structs
+// on success the first returned value is the slab index of the added slab
+// on failure the second returned value is set to the error message
 func (s *slabPool) addSlab() (int, error) {
 	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(s.objsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
@@ -99,8 +107,8 @@ func (s *slabPool) addSlab() (int, error) {
 
 // search searches for a byte slice that must have the length of
 // the slab's objectSize.
-// When found it returns the objectID and true,
-// otherwise the second returned value will be false
+// When found it returns the object address and true,
+// otherwise the second returned value is false
 func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	if len(searching) != int(s.objSize) {
 		return 0, false
@@ -126,9 +134,9 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	return 0, false
 }
 
-// get retreives and object of the given objectID
-// the second returned value is true if the object was found,
-// otherwise it's false
+// get retreives and object of the given object address
+// it does not do any sanity checking, if an invalid address is passed
+// anything can happen
 func (s *slabPool) get(obj ObjAddr) []byte {
 	var res []byte
 	sh := (*reflect.SliceHeader)(unsafe.Pointer(&res))
@@ -138,6 +146,8 @@ func (s *slabPool) get(obj ObjAddr) []byte {
 	return res
 }
 
+// deleteSlab deletes the slab at the given slab index
+// on success it returns nil, otherwise it returns an error
 func (s *slabPool) deleteSlab(slabId int) error {
 	if slabId >= len(s.slabs) {
 		return fmt.Errorf("Delete failed: Slab %d does not exist", slabId)
@@ -158,8 +168,8 @@ func (s *slabPool) deleteSlab(slabId int) error {
 	return nil
 }
 
-// delete takes an objectID and deletes it from the slabPool
-// on success it returns true, otherwise false
+// delete takes an object address and deletes it from the slabPool
+// on success it returns nil, otherwise it returns an error
 func (s *slabPool) delete(obj ObjAddr) error {
 	slabId := s.findSlabByObjAddr(obj)
 	if slabId < 0 || slabId >= len(s.slabs) {
