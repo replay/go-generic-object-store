@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"syscall"
 	"unsafe"
 
@@ -11,13 +12,16 @@ import (
 
 var objectsPerSlab uint8 = 100
 
+type ObjAddr = uintptr
+type SlabAddr = uintptr
+
 type slab struct {
 	free *bitset.BitSet
 	data []byte
 }
-type objectID struct {
-	slabAddr  uintptr
-	objectPos uint8
+
+func (s *slab) addr() SlabAddr {
+	return SlabAddr(unsafe.Pointer(&s.data[0]))
 }
 
 type sizedPool struct {
@@ -31,47 +35,70 @@ type sizedPool struct {
 // slab and then use that one.
 // the first return value is the objectID of the added object,
 // the second value is the error in case one occurred
-func (s *sizedPool) add(obj []byte) (objectID, error) {
-	var pos uint
+func (s *sizedPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
-	var slabId int
-	for i, s := range s.slabs {
-		pos, success = s.free.NextClear(0)
+	var usedSlab slab
+	var pos uint
+	for slabId, slab := range s.slabs {
+		pos, success = slab.free.NextClear(0)
 		if success {
-			slabId = i
+			usedSlab = s.slabs[slabId]
 			break
 		}
 	}
-	id := objectID{
-		objectPos: uint8(pos),
-	}
-	var err error
+
+	var newSlabAddr SlabAddr
+	var newObjAddr ObjAddr
+
 	if !success {
-		slabId, err = s.addSlab()
+		slabId, err := s.addSlab()
 		if err != nil {
-			return id, err
+			return newObjAddr, newSlabAddr, err
 		}
+		usedSlab = s.slabs[slabId]
+		newSlabAddr = usedSlab.addr()
 	}
 
-	slab := s.slabs[slabId]
-	slab.free.Set(pos)
+	usedSlab.free.Set(uint(pos))
 	offset := uint16(pos) * uint16(s.objSize)
-	for i := uint16(0); i < uint16(s.objSize); i++ {
-		slab.data[i+offset] = obj[i]
-	}
+	newObjAddr = ObjAddr(usedSlab.addr()) + ObjAddr(offset)
+	copy(usedSlab.data[offset:], obj)
 
-	id.slabAddr = reflect.ValueOf(slab.data).Pointer()
-	return id, nil
+	return newObjAddr, newSlabAddr, nil
+}
+
+func (s *sizedPool) findSlabByObjAddr(obj ObjAddr) int {
+	return sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() <= obj })
+}
+
+// addSlab adds another slab to the pool and initalizes the related structs
+func (s *sizedPool) addSlab() (int, error) {
+	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(objectsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	if err != nil {
+		return 0, err
+	}
+	newSlab := slab{
+		data: data,
+		free: bitset.New(uint(objectsPerSlab)),
+	}
+	newSlabAddr := newSlab.addr()
+
+	// find the right location to insert the new slab
+	insertAt := sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() < newSlabAddr })
+	s.slabs = append(s.slabs, slab{})
+	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
+	s.slabs[insertAt] = newSlab
+
+	return insertAt, nil
 }
 
 // search searches for a byte slice that must have the length of
 // the slab's objectSize.
 // When found it returns the objectID and true,
 // otherwise the second returned value will be false
-func (s *sizedPool) search(searching []byte) (objectID, bool) {
-	var res objectID
+func (s *sizedPool) search(searching []byte) (ObjAddr, bool) {
 	if len(searching) != int(s.objSize) {
-		return res, false
+		return 0, false
 	}
 
 	for _, slab := range s.slabs {
@@ -87,50 +114,23 @@ func (s *sizedPool) search(searching []byte) (objectID, bool) {
 						continue OBJECT
 					}
 				}
-				res.objectPos = i
-				res.slabAddr = reflect.ValueOf(slab.data).Pointer()
-				return res, true
+				return ObjAddr(unsafe.Pointer(&obj)), true
 			}
 		}
 	}
-	return res, false
+	return 0, false
 }
 
 // get retreives and object of the given objectID
 // the second returned value is true if the object was found,
 // otherwise it's false
-func (s *sizedPool) get(obj objectID) ([]byte, bool) {
-	// verify that the objectPos is inside the valid range
-	if obj.objectPos >= objectsPerSlab {
-		return nil, false
-	}
-
-	slabId := s.getSlabId(obj.slabAddr)
-	if slabId < 0 {
-		return nil, false
-	}
-
-	slab := s.slabs[slabId]
-	if !slab.free.Test(uint(obj.objectPos)) {
-		return nil, false
-	}
-
-	offset := int(obj.objectPos) * int(s.objSize)
-
-	return slab.data[offset : offset+int(s.objSize)], true
-}
-
-// addSlab adds another slab to the pool and initalizes the related structs
-func (s *sizedPool) addSlab() (int, error) {
-	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(objectsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
-	if err != nil {
-		return 0, err
-	}
-	s.slabs = append(s.slabs, slab{
-		data: data,
-		free: bitset.New(uint(objectsPerSlab)),
-	})
-	return len(s.slabs) - 1, nil
+func (s *sizedPool) get(obj ObjAddr) []byte {
+	var res []byte
+	sh := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	sh.Data = obj
+	sh.Len = int(s.objSize)
+	sh.Cap = int(s.objSize)
+	return res
 }
 
 func (s *sizedPool) deleteSlab(slabId int) error {
@@ -147,20 +147,18 @@ func (s *sizedPool) deleteSlab(slabId int) error {
 
 // delete takes an objectID and deletes it from the sizedPool
 // on success it returns true, otherwise false
-func (s *sizedPool) delete(obj objectID) error {
-	slabId := s.getSlabId(obj.slabAddr)
-	if slabId < 0 {
-		return fmt.Errorf("Delete failed: SlabID %d does not exist", obj.slabAddr)
+func (s *sizedPool) delete(obj ObjAddr) error {
+	slabId := s.findSlabByObjAddr(obj)
+	if slabId < 0 || slabId >= len(s.slabs) {
+		return fmt.Errorf("Delete failed: SlabID for object could not be found")
 	}
 
 	slab := s.slabs[slabId]
-
-	// verify that the given arguments refer to an object within the size of the data slice
-	if len(slab.data) <= int(obj.objectPos)*int(s.objSize) {
-		return fmt.Errorf("Delete failed: Object ID %d is outside of valid range 0-%d", obj.objectPos, int(obj.objectPos)*int(s.objSize))
+	objPos := uint(obj-slab.addr()) / uint(s.objSize)
+	if objPos >= uint(objectsPerSlab) {
+		return fmt.Errorf("Delete failed: Could not calculate position of object")
 	}
-
-	slab.free.Clear(uint(obj.objectPos))
+	slab.free.Clear(objPos)
 
 	if slab.free.None() {
 		err := s.deleteSlab(slabId)
@@ -170,15 +168,4 @@ func (s *sizedPool) delete(obj objectID) error {
 	}
 
 	return nil
-}
-
-// getSlabId looks up the ID for the slab referred to by a given pointer
-// the pointer must point at the first element of the slabs data slice
-func (s *sizedPool) getSlabId(addr uintptr) int {
-	for i, s := range s.slabs {
-		if (uintptr)(unsafe.Pointer(&s.data[0])) == addr {
-			return i
-		}
-	}
-	return -1
 }
