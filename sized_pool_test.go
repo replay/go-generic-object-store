@@ -2,31 +2,55 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
 
+func TestAddingDeletingSlabs(t *testing.T) {
+	objSize := uint8(10)
+	objsPerSlab := uint8(1)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	var objAddresses []ObjAddr
+
+	Convey("When adding 3 times as many objects as there are objects per slab", t, func() {
+		for i := 0; i < int(objsPerSlab)*3; i++ {
+			value := fmt.Sprintf("%010d", i)
+			objAddr, _, _ := sp.add([]byte(value))
+			objAddresses = append(objAddresses, objAddr)
+		}
+
+		So(len(sp.slabs), ShouldEqual, 3)
+
+		Convey("then we delete all objects again", func() {
+			for _, objAddr := range objAddresses {
+				err := sp.delete(objAddr)
+				So(err, ShouldBeNil)
+			}
+
+			So(len(sp.slabs), ShouldEqual, 0)
+		})
+	})
+}
 func TestAddingGettingManyObjects(t *testing.T) {
-	sp := sizedPool{objSize: 5}
-	objects := make(map[string]objectID)
+	objSize := uint8(10)
+	objsPerSlab := uint8(10)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	objects := make(map[string]ObjAddr)
 
 	Convey("When generating a set of many test objects", t, func() {
 		var err error
-		// generate twice as many test object as there are objects per slab and add them to sizedPool
-		for i := 0; i < int(objectsPerSlab)*2; i++ {
-			value := fmt.Sprintf("%05d", i)
-			objects[value], err = sp.add([]byte(value))
+		// generate twice as many test object as there are objects per slab and add them to slabPool
+		for i := 0; i < int(objsPerSlab)*2; i++ {
+			value := fmt.Sprintf("%010d", i)
+			objects[value], _, err = sp.add([]byte(value))
 			So(err, ShouldBeNil)
 		}
 
 		Convey("We should be able to retreive each of them and get the correct value back", func() {
 			var returned []byte
-			var success bool
-			for value, objId := range objects {
-				returned, success = sp.get(objId)
-				So(success, ShouldBeTrue)
+			for value, obj := range objects {
+				returned = sp.get(obj)
 				So(string(returned), ShouldEqual, value)
 			}
 			So(len(sp.slabs), ShouldEqual, 2)
@@ -35,77 +59,60 @@ func TestAddingGettingManyObjects(t *testing.T) {
 }
 
 func TestAddingSearchingObject(t *testing.T) {
-	sp := sizedPool{objSize: 5}
-	testString := "abcde"
+	objSize := uint8(5)
+	objsPerSlab := uint8(1)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	testString1 := "abcde"
 	testString2 := "aaaaa"
-	var result1, result2 objectID
+	var objAddr1, objAddr2 ObjAddr
 	var success bool
 	Convey("When adding a byte slice to the pool", t, func() {
-		sp.add([]byte(testString))
+		sp.add([]byte(testString1))
 
 		Convey("we should be able to find it with the search method", func() {
-			result1, success = sp.search([]byte(testString))
+			objAddr1, success = sp.search([]byte(testString1))
 			So(success, ShouldBeTrue)
-			So(sp.slabs[0].free.Test(uint(result1.objectPos)), ShouldBeTrue)
-			So(result1.slabAddr, ShouldEqual, reflect.ValueOf(sp.slabs[0].data).Pointer())
+			result1 := sp.get(objAddr1)
+			So(string(result1), ShouldEqual, testString1)
 		})
 	})
 	Convey("When adding a second object", t, func() {
 		sp.add([]byte(testString2))
 
 		Convey("we should also be able to find it", func() {
-			result2, success = sp.search([]byte(testString2))
+			objAddr2, success = sp.search([]byte(testString2))
 			So(success, ShouldBeTrue)
-			So(sp.slabs[0].free.Test(uint(result2.objectPos)), ShouldBeTrue)
-			So(result2.slabAddr, ShouldEqual, reflect.ValueOf(sp.slabs[0].data).Pointer())
-		})
-	})
-}
-
-func TestAddingMoreObjectsThanFitInOneSlab(t *testing.T) {
-	Convey(fmt.Sprintf("When adding %d byte slices to the pool with %d objects per slab", objectsPerSlab+1, objectsPerSlab), t, func() {
-		sp := sizedPool{objSize: 5}
-		// generating lots of 5-byte strings
-		for i := 10000; i <= 10000+int(objectsPerSlab); i++ {
-			toInsert := []byte(fmt.Sprintf("%d", i))
-			sp.add(toInsert)
-		}
-
-		Convey("then the number of slabs should be 2", func() {
-			So(len(sp.slabs), ShouldEqual, 2)
+			result2 := sp.get(objAddr2)
+			So(string(result2), ShouldEqual, testString2)
 		})
 	})
 }
 
 func TestDeletingAddedObjects(t *testing.T) {
 	testValue := "abcde"
+	objSize := uint8(5)
+	objsPerSlab := uint8(1)
+	sp := NewSlabPool(objSize, objsPerSlab)
+
 	Convey("When adding and object to the pool", t, func() {
-		sp := sizedPool{objSize: 5}
-		idFromAdd, err := sp.add([]byte(testValue))
+		objAddr, _, err := sp.add([]byte(testValue))
 		So(err, ShouldBeNil)
 
 		Convey("then we should be able to retreive it by searching for the value and getting the id", func() {
-			idFromSearch, success := sp.search([]byte(testValue))
+			searchResult, success := sp.search([]byte(testValue))
 			So(success, ShouldBeTrue)
-			returnedValue, success := sp.get(idFromSearch)
-			So(success, ShouldBeTrue)
+			returnedValue := sp.get(searchResult)
 			So(returnedValue, ShouldResemble, []byte(testValue))
-			returnedValue, success = sp.get(idFromAdd)
-			So(success, ShouldBeTrue)
+			returnedValue = sp.get(searchResult)
 			So(returnedValue, ShouldResemble, []byte(testValue))
 
 			Convey("Then we delete that object by id", func() {
-				err = sp.delete(idFromAdd)
+				err = sp.delete(objAddr)
 				So(err, ShouldBeNil)
 
-				Convey("now we we should not be able to retrieve it by searching for the value", func() {
+				Convey("now we we should not be able to retrieve it by searching for the value anymore", func() {
 					_, success := sp.search([]byte(testValue))
 					So(success, ShouldBeFalse)
-
-					Convey("nor by getting the objectID", func() {
-						_, success = sp.get(idFromAdd)
-						So(success, ShouldBeFalse)
-					})
 				})
 			})
 		})
