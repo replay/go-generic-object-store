@@ -92,16 +92,16 @@ func (o *ObjectStore) Search(searching []byte) (ObjAddr, bool) {
 }
 
 // Get retrieves a value by object address
-// on success the first returned value is object as byte slice and the second is true
-// on failure the second returned value is false
-func (o *ObjectStore) Get(obj ObjAddr) ([]byte, bool) {
+// on success returns a []byte of appropriate length of the requested object
+// on failure returns nil
+func (o *ObjectStore) Get(obj ObjAddr) []byte {
 	idx, err := o.getObjectSize(obj)
 	if err != nil {
-		return nil, false
+		return nil
 	}
 	pool, ok := o.slabPools[o.lookupTable[idx].size]
 	if !ok {
-		return nil, false
+		return nil
 	}
 	return pool.get(obj)
 }

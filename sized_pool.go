@@ -12,9 +12,6 @@ import (
 
 var objectsPerSlab uint8 = 100
 
-type ObjAddr = uintptr
-type SlabAddr = uintptr
-
 type slab struct {
 	free *bitset.BitSet
 	data []byte
