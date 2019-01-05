@@ -11,6 +11,14 @@ import (
 type ObjectStore struct {
 	slabPools   map[uint8]slabPool
 	lookupTable []slabInfo
+	objsPerSlab uint8
+}
+
+func NewObjectStore(objsPerSlab uint8) ObjectStore {
+	return ObjectStore{
+		objsPerSlab: objsPerSlab,
+		slabPools:   make(map[uint8]slabPool),
+	}
 }
 
 type slabInfo struct {
@@ -68,7 +76,7 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 
 // addSlabPool adds a slab pool of the specified size to this object store
 func (o *ObjectStore) addSlabPool(size uint8) {
-	o.slabPools[size] = slabPool{objSize: size}
+	o.slabPools[size] = NewSlabPool(size, o.objsPerSlab)
 }
 
 // Search searches for the given value in the accordingly sized slab pool
