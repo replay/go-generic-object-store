@@ -66,16 +66,16 @@ func (s *slab) objsPerSlab() uint {
 	return s.bitSet().Len()
 }
 
-func (s *slab) getObjectOffset(idx uint) (uint, error) {
+func (s *slab) getObjectOffset(idx uint) (uintptr, error) {
 	if idx >= s.objsPerSlab() {
 		return 0, fmt.Errorf("getObjectByIndex: Given index %d is above maximum %d", idx, s.objsPerSlab())
 	}
 
 	// offset where the object data begins
-	dataOffset := 1 + sizeOfBitSet + uint(len(s.bitSet().Bytes())*8)
+	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
 
 	// offset where the object is within the data range
-	objectOffset := uint(s.objSize) * idx
+	objectOffset := uintptr(s.objSize) * uintptr(idx)
 
 	return dataOffset + objectOffset, nil
 }
@@ -89,7 +89,7 @@ func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
 		return err
 	}
 
-	data := *(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + uintptr(offset)))
+	data := *(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset))
 	copy(data, obj)
 	return nil
 }
@@ -100,5 +100,5 @@ func (s *slab) getObjectByIdx(idx uint, obj []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	return (*(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + uintptr(offset))))[:s.objSize], nil
+	return (*(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset)))[:s.objSize], nil
 }
