@@ -15,7 +15,7 @@ func TestNewSlab(t *testing.T) {
 func TestSlabBitset(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
-		objsPerSlab := uint8(100)
+		objsPerSlab := uint(10000)
 		slab := newSlab(objSize, objsPerSlab)
 		So(slab.objSize, ShouldEqual, objSize)
 		So(slab.objsPerSlab(), ShouldEqual, objsPerSlab)

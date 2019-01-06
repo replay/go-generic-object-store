@@ -14,11 +14,10 @@ type slab struct {
 	objSize uint8
 }
 
-func newSlab(objSize, objsPerSlab uint8) *slab {
+func newSlab(objSize uint8, objsPerSlab uint) *slab {
 	offsetOfBitSetData := reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
-	bitSet := bitset.New(uint(objsPerSlab))
+	bitSet := bitset.New(objsPerSlab)
 	bitSetDataLen := len(bitSet.Bytes())
-	//sizeOfUint := unsafe.Sizeof(uint(0))
 	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
@@ -26,8 +25,11 @@ func newSlab(objSize, objsPerSlab uint8) *slab {
 
 	data, _ := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 
+	// set the objSize property of the new slab
 	data[0] = byte(objSize)
 
+	// create temporary byte slice that accesses bitSet as underlying data
+	// that way we can read the bitSet like a byte slice
 	var copyFrom []byte
 	copyFromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&copyFrom))
 	copyFromHeader.Data = uintptr(unsafe.Pointer(bitSet))
@@ -43,6 +45,7 @@ func newSlab(objSize, objsPerSlab uint8) *slab {
 	// set the data pointer to point at the address right after the bitSet struct
 	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
 
+	// return the data byte slice as a slab
 	return (*slab)(unsafe.Pointer(&data[0]))
 }
 
