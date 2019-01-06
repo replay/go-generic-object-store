@@ -11,19 +11,15 @@ import (
 type SlabAddr = uintptr
 
 type slab struct {
-	objSize     uint8
-	objsPerSlab uint8
+	objSize uint8
 }
 
-const sizeOfBitSet = unsafe.Sizeof(uint(0)) + unsafe.Sizeof([]byte{})
-const sizeOfUint = unsafe.Sizeof(uint(0))
-
-var bitSetDataLen int
-
 func newSlab(objSize, objsPerSlab uint8) *slab {
-	bitset.LittleEndian()
+	offsetOfBitSetData := reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
 	bitSet := bitset.New(uint(objsPerSlab))
-	bitSetDataLen = len(bitSet.Bytes())
+	bitSetDataLen := len(bitSet.Bytes())
+	//sizeOfUint := unsafe.Sizeof(uint(0))
+	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
@@ -42,7 +38,7 @@ func newSlab(objSize, objsPerSlab uint8) *slab {
 	copy(data[1:], copyFrom)
 
 	// get the byte slice header of bitset's data property
-	bitSetDataSlice := (*reflect.SliceHeader)(unsafe.Pointer(&data[1+int(sizeOfUint)]))
+	bitSetDataSlice := (*reflect.SliceHeader)(unsafe.Pointer(&data[1+offsetOfBitSetData]))
 
 	// set the data pointer to point at the address right after the bitSet struct
 	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
@@ -58,6 +54,6 @@ func (s *slab) bitSet() *bitset.BitSet {
 	return (*bitset.BitSet)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + 1))
 }
 
-func (s *slab) getObjsPerSlab() uint {
-	return uint(s.objsPerSlab)
+func (s *slab) objsPerSlab() uint {
+	return s.bitSet().Len()
 }
