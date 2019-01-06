@@ -29,6 +29,19 @@ type ObjAddr = uintptr
 // SlabAddr is a uintptr used for storing memory addresses of &slab.data[0] in each slab
 type SlabAddr = uintptr
 
+func slabFromSlabAddr(addr SlabAddr) *slab {
+	return (*slab)(unsafe.Pointer(addr))
+}
+
+func objFromObjAddr(obj ObjAddr, size uint8) []byte {
+	var res []byte
+	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	resHeader.Data = obj
+	resHeader.Len = int(size)
+	resHeader.Cap = resHeader.Len
+	return res
+}
+
 // Add will add an object to the slab pool of the correct size
 // on success it returns the memory address as an ObjAddr (uintptr) of the added object
 // on failure it returns 0 and an error
@@ -104,29 +117,31 @@ func (o *ObjectStore) Get(obj ObjAddr) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	size := *(*uint8)(unsafe.Pointer(sAddr))
-	var res []byte
-	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	resHeader.Data = obj
-	resHeader.Len = int(size)
-	resHeader.Cap = int(size)
-	return res, nil
+
+	slab := slabFromSlabAddr(sAddr)
+	return objFromObjAddr(obj, slab.objSize), nil
 }
 
 // Delete deletes an object by object address
 // on success it returns nil, otherwise it returns an error message
-/*func (o *ObjectStore) Delete(obj ObjAddr) error {
-	idx, err := o.getObjectSize(obj)
+func (o *ObjectStore) Delete(obj ObjAddr) error {
+	slabAddr, err := o.getSlabAddress(obj)
 	if err != nil {
 		return err
 	}
 
-	slab := o.lookupTable[idx]
-	if !ok {
-		return fmt.Errorf("ObjectStore: Delete failed slab pool for size %d does not exist", o.lookupTable[idx].size)
+	slab := slabFromSlabAddr(slabAddr)
+	empty := slab.delete(obj)
+
+	if empty {
+		err := o.slabPools[slab.objSize].deleteSlab(slabAddr)
+		if err != nil {
+			return err
+		}
 	}
-	return pool.delete(obj)
-}*/
+
+	return nil
+}
 
 // getObjectSize searches, in a descending order sorted slice, for a slab which is likely to contain
 // the object identified by its address

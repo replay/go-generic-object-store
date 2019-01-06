@@ -24,7 +24,6 @@ func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
-
 	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return nil, err
@@ -66,9 +65,17 @@ func (s *slab) objsPerSlab() uint {
 	return s.bitSet().Len()
 }
 
+func (s *slab) getTotalLength() uintptr {
+	return s.getDataOffset() + uintptr(s.objSize)*uintptr(s.objsPerSlab())
+}
+
+func (s *slab) getDataOffset() uintptr {
+	return uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
+}
+
 func (s *slab) getObjOffset(idx uint) uintptr {
 	// offset where the object data begins
-	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
+	dataOffset := s.getDataOffset()
 
 	// offset where the object is within the data range
 	objectOffset := uintptr(s.objSize) * uintptr(idx)
@@ -76,7 +83,24 @@ func (s *slab) getObjOffset(idx uint) uintptr {
 	return dataOffset + objectOffset
 }
 
-func (s *slab) addObjByIdx(idx uint, obj []byte) ObjAddr {
+func (s *slab) getObjIdx(obj ObjAddr) uint {
+	// offset where the object data begins
+	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
+
+	// offset where the object is within the data range
+	objectOffset := obj - dataOffset - uintptr(unsafe.Pointer(s))
+
+	// calculate index based on object offset and object size
+	return uint(objectOffset / uintptr(s.objSize))
+}
+
+func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
+	bitSet := s.bitSet()
+	idx, success := bitSet.NextClear(0)
+	if !success {
+		return 0, false
+	}
+
 	offset := s.getObjOffset(idx)
 
 	// objAddr will be the unique identifier of the newly created object
@@ -90,17 +114,16 @@ func (s *slab) addObjByIdx(idx uint, obj []byte) ObjAddr {
 
 	s.bitSet().Set(idx)
 
-	return objAddr
+	return objAddr, true
+}
+
+func (s *slab) delete(obj ObjAddr) bool {
+	idx := s.getObjIdx(obj)
+	bitSet := s.bitSet()
+	bitSet.Clear(idx)
+	return bitSet.None()
 }
 
 func (s *slab) getObjByIdx(idx uint) []byte {
-	offset := s.getObjOffset(idx)
-
-	var res []byte
-	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	resHeader.Data = uintptr(unsafe.Pointer(s)) + offset
-	resHeader.Cap = 5
-	resHeader.Len = 5
-
-	return res
+	return objFromObjAddr(uintptr(unsafe.Pointer(s))+s.getObjOffset(idx), s.objSize)
 }

@@ -52,11 +52,11 @@ func TestSettingGettingObjects(t *testing.T) {
 
 		Convey("we should be able to set an object", func() {
 			objValue := "abcde"
-			slab.addObjByIdx(0, []byte(objValue))
+			objAddr, success := slab.addObj([]byte(objValue))
+			So(success, ShouldBeTrue)
 
-			Convey("and retreive it again", func() {
-				retreived := slab.getObjByIdx(0)
-				So(string(retreived), ShouldEqual, objValue)
+			Convey("and access it via the object address", func() {
+				So(string(objFromObjAddr(objAddr, objSize)), ShouldEqual, objValue)
 			})
 		})
 	})
@@ -67,17 +67,20 @@ func TestSettingGettingManyObjects(t *testing.T) {
 		objSize := uint8(5)
 		objsPerSlab := uint(100)
 		slab, err := newSlab(objSize, objsPerSlab)
+		var objAddresses []ObjAddr
 		So(err, ShouldBeNil)
 
 		Convey("we should be able to fill it up with objects", func() {
 			for i := uint(0); i < objsPerSlab; i++ {
 				value := fmt.Sprintf("%05d", i)
-				slab.addObjByIdx(i, []byte(value))
+				objAddr, success := slab.addObj([]byte(value))
+				So(success, ShouldBeTrue)
+				objAddresses = append(objAddresses, objAddr)
 			}
 
 			Convey("and retreive all of them again", func() {
 				for i := uint(0); i < objsPerSlab; i++ {
-					obtainedValue := slab.getObjByIdx(i)
+					obtainedValue := objFromObjAddr(objAddresses[i], objSize)
 					So(string(obtainedValue), ShouldEqual, fmt.Sprintf("%05d", i))
 				}
 			})
