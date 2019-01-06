@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"fmt"
 	"reflect"
 	"syscall"
 	"unsafe"
@@ -20,7 +21,9 @@ type slab struct {
 
 func newSlab(objSize uint8, objsPerSlab uint) *slab {
 	bitSet := bitset.New(objsPerSlab)
-	bitSetDataLen := len(bitSet.Bytes())
+
+	bitSetDataLen := len(bitSet.Bytes()) * 8
+	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
@@ -61,4 +64,41 @@ func (s *slab) bitSet() *bitset.BitSet {
 
 func (s *slab) objsPerSlab() uint {
 	return s.bitSet().Len()
+}
+
+func (s *slab) getObjectOffset(idx uint) (uint, error) {
+	if idx >= s.objsPerSlab() {
+		return 0, fmt.Errorf("getObjectByIndex: Given index %d is above maximum %d", idx, s.objsPerSlab())
+	}
+
+	// offset where the object data begins
+	dataOffset := 1 + sizeOfBitSet + uint(len(s.bitSet().Bytes())*8)
+
+	// offset where the object is within the data range
+	objectOffset := uint(s.objSize) * idx
+
+	return dataOffset + objectOffset, nil
+}
+
+func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
+	if uint8(len(obj)) != s.objSize {
+		return fmt.Errorf("setObjectByIdx: Wrong object size %d, should be %d", len(obj), s.objSize)
+	}
+	offset, err := s.getObjectOffset(idx)
+	if err != nil {
+		return err
+	}
+
+	data := *(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + uintptr(offset)))
+	copy(data, obj)
+	return nil
+}
+
+func (s *slab) getObjectByIdx(idx uint, obj []byte) ([]byte, error) {
+	offset, err := s.getObjectOffset(idx)
+	if err != nil {
+		return nil, err
+	}
+
+	return (*(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + uintptr(offset))))[:s.objSize], nil
 }
