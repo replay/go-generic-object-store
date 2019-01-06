@@ -112,3 +112,31 @@ func TestConversion(t *testing.T) {
 		t.Fatalf("Expected myVar3.value to be %d, but it is %d", myVar2.value, myVar3.value)
 	}
 }
+
+func TestFastCopy(t *testing.T) {
+
+	fastCopy := func(dst, src, len uintptr) {
+		var i uintptr
+		for ; i < len; i = i + 8 {
+			*(*uint64)(unsafe.Pointer(dst + i)) = *(*uint64)(unsafe.Pointer(src + i))
+		}
+
+		remainder := len % 8
+		if remainder == 0 {
+			return
+		}
+
+		for j := uintptr(0); j < remainder; j++ {
+			*((*byte)(unsafe.Pointer(dst + i + j))) = *((*byte)(unsafe.Pointer(src + i + j)))
+		}
+	}
+
+	testValueToCopy := []byte("123456781234567890")
+	testDestination := make([]byte, len(testValueToCopy))
+
+	fastCopy((*reflect.SliceHeader)(unsafe.Pointer(&testDestination)).Data, (*reflect.SliceHeader)(unsafe.Pointer(&testValueToCopy)).Data, uintptr(len(testValueToCopy)))
+
+	if string(testDestination) != string(testValueToCopy) {
+		t.Fatalf("Destination and source look different")
+	}
+}
