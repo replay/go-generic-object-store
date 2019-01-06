@@ -1,7 +1,6 @@
 package gos
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 	"syscall"
@@ -52,10 +51,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	}
 
 	currentSlab = s.slabs[slabId]
-	idx, success = currentSlab.bitSet().NextClear(0)
-	if !success {
-		return 0, 0, fmt.Errorf("Add: Failed adding to new slab")
-	}
+	idx = 0
 
 	return currentSlab.addObjByIdx(idx, obj), currentSlab.addr(), nil
 }
@@ -72,18 +68,18 @@ func (s *slabPool) findSlabByObjAddr(obj ObjAddr) int {
 // on success the first returned value is the slab index of the added slab
 // on failure the second returned value is set to the error message
 func (s *slabPool) addSlab() (int, error) {
-	currentSlab, err := newSlab(s.objSize, s.objsPerSlab)
+	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
 	if err != nil {
 		return 0, err
 	}
 
-	newSlabAddr := currentSlab.addr()
+	newSlabAddr := addedSlab.addr()
 
 	// find the right location to insert the new slab
 	insertAt := sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() < newSlabAddr })
 	s.slabs = append(s.slabs, &slab{})
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
-	s.slabs[insertAt] = currentSlab
+	s.slabs[insertAt] = addedSlab
 
 	return insertAt, nil
 }
