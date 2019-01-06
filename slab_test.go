@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"unsafe"
@@ -36,6 +37,50 @@ func TestSlabBitset(t *testing.T) {
 				So(bitSet2.Test(7), ShouldBeFalse)
 				So(bitSet2.Test(8), ShouldBeFalse)
 				So(bitSet2.Test(9), ShouldBeTrue)
+			})
+		})
+	})
+}
+
+func TestSettingGettingObjects(t *testing.T) {
+	Convey("When creating a new slab", t, func() {
+		objSize := uint8(5)
+		objsPerSlab := uint(100)
+		slab := newSlab(objSize, objsPerSlab)
+
+		Convey("we should be able to set an object", func() {
+			objValue := "abcde"
+			err := slab.setObjectByIdx(0, []byte(objValue))
+			So(err, ShouldBeNil)
+
+			Convey("and retreive it again", func() {
+				retreived, err := slab.getObjectByIdx(0)
+				So(err, ShouldBeNil)
+				So(string(retreived), ShouldEqual, objValue)
+			})
+		})
+	})
+}
+
+func TestSettingGettingManyObjects(t *testing.T) {
+	Convey("When creating a new slab", t, func() {
+		objSize := uint8(5)
+		objsPerSlab := uint(100)
+		slab := newSlab(objSize, objsPerSlab)
+
+		Convey("we should be able to fill it up with objects", func() {
+			for i := uint(0); i < objsPerSlab; i++ {
+				value := fmt.Sprintf("%05d", i)
+				err := slab.setObjectByIdx(i, []byte(value))
+				So(err, ShouldBeNil)
+			}
+
+			Convey("and retreive all of them again", func() {
+				for i := uint(0); i < objsPerSlab; i++ {
+					obtainedValue, err := slab.getObjectByIdx(i)
+					So(err, ShouldBeNil)
+					So(string(obtainedValue), ShouldEqual, fmt.Sprintf("%05d", i))
+				}
 			})
 		})
 	})

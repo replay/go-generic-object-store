@@ -84,6 +84,7 @@ func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
 	if uint8(len(obj)) != s.objSize {
 		return fmt.Errorf("setObjectByIdx: Wrong object size %d, should be %d", len(obj), s.objSize)
 	}
+
 	offset, err := s.getObjectOffset(idx)
 	if err != nil {
 		return err
@@ -94,6 +95,9 @@ func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
 		*((*byte)(p)) = obj[i]
 		p = unsafe.Pointer((uintptr(p)) + 1)
 	}
+
+	s.bitSet().Set(idx)
+
 	return nil
 }
 
@@ -108,5 +112,6 @@ func (s *slab) getObjectByIdx(idx uint) ([]byte, error) {
 	resHeader.Data = uintptr(unsafe.Pointer(s)) + offset
 	resHeader.Cap = 5
 	resHeader.Len = 5
+
 	return res, nil
 }
