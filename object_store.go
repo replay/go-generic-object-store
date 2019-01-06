@@ -42,6 +42,10 @@ func objFromObjAddr(obj ObjAddr, size uint8) []byte {
 	return res
 }
 
+func objAddrFromObj(obj []byte) ObjAddr {
+	return ObjAddr(unsafe.Pointer(&obj[0]))
+}
+
 // Add will add an object to the slab pool of the correct size
 // on success it returns the memory address as an ObjAddr (uintptr) of the added object
 // on failure it returns 0 and an error
