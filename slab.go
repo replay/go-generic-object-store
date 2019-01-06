@@ -55,7 +55,7 @@ func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 }
 
 func (s *slab) addr() SlabAddr {
-	return SlabAddr(unsafe.Pointer(&s))
+	return SlabAddr(unsafe.Pointer(s))
 }
 
 func (s *slab) bitSet() *bitset.BitSet {
