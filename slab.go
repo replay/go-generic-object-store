@@ -8,6 +8,10 @@ import (
 	"github.com/willf/bitset"
 )
 
+var offsetOfBitSetData = reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
+
+const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
+
 type SlabAddr = uintptr
 
 type slab struct {
@@ -15,10 +19,8 @@ type slab struct {
 }
 
 func newSlab(objSize uint8, objsPerSlab uint) *slab {
-	offsetOfBitSetData := reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
 	bitSet := bitset.New(objsPerSlab)
 	bitSetDataLen := len(bitSet.Bytes())
-	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
