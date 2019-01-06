@@ -11,7 +11,7 @@ func TestAddingGettingObjects3(t *testing.T) {
 	testAddingGettingObjects(t, 3, 0, 1000)
 }
 
-func TestAddingGettingObjects12(t *testing.T) {
+func TestAddingGettingObjects13(t *testing.T) {
 	testAddingGettingObjects(t, 50, 1000000000000, 1000000005000)
 }
 
