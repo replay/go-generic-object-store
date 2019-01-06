@@ -135,10 +135,7 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
 	s.slabs[len(s.slabs)-1] = &slab{}
 	s.slabs = s.slabs[:len(s.slabs)-1]
 
-	bitSet := currentSlab.bitSet()
-	sizeOfBitSet := unsafe.Sizeof(*bitSet)
-	bitSetDataLen := len(bitSet.Bytes()) * 8
-	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(s.objSize)*int(bitSet.Len())
+	totalLen, _ := slabLengthFromAttributes(currentSlab.objSize, currentSlab.bitSet().Len())
 
 	// unmap the slab's memory
 	var toDelete []byte

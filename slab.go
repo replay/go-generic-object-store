@@ -16,15 +16,18 @@ type slab struct {
 	objSize uint8
 }
 
-func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
+func slabLengthFromAttributes(objSize uint8, objsPerSlab uint) (int, *bitset.BitSet) {
 	bitSet := bitset.New(objsPerSlab)
 
 	bitSetDataLen := len(bitSet.Bytes()) * 8
 	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
-	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
+	return 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab), bitSet
+}
 
+func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
+	totalLen, bitSet := slabLengthFromAttributes(objSize, objsPerSlab)
 	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return nil, err
