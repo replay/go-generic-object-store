@@ -1,34 +1,22 @@
 package gos
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 	"syscall"
 	"unsafe"
-
-	"github.com/willf/bitset"
 )
 
 var objectsPerSlab uint8 = 100
 
-type slab struct {
-	free *bitset.BitSet
-	data []byte
-}
-
-func (s *slab) addr() SlabAddr {
-	return SlabAddr(unsafe.Pointer(&s.data[0]))
-}
-
 type slabPool struct {
-	slabs       []slab
+	slabs       []*slab
 	objSize     uint8
-	objsPerSlab uint8
+	objsPerSlab uint
 }
 
-func NewSlabPool(objSize, objsPerSlab uint8) slabPool {
-	return slabPool{
+func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
+	return &slabPool{
 		objSize:     objSize,
 		objsPerSlab: objsPerSlab,
 	}
@@ -44,34 +32,28 @@ func NewSlabPool(objSize, objsPerSlab uint8) slabPool {
 // the third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
-	var usedSlab slab
-	var pos uint
-	for slabId, slab := range s.slabs {
-		pos, success = slab.free.NextClear(0)
-		if success {
-			usedSlab = s.slabs[slabId]
-			break
+	var idx uint
+	var currentSlab *slab
+	var slabId int
+
+	for slabId, currentSlab = range s.slabs {
+		idx, success = currentSlab.bitSet().NextClear(0)
+		if !success {
+			continue
 		}
+		return currentSlab.addObjByIdx(idx, obj), 0, nil
 	}
 
-	var newSlabAddr SlabAddr
-	var newObjAddr ObjAddr
-
-	if !success {
-		slabId, err := s.addSlab()
-		if err != nil {
-			return newObjAddr, newSlabAddr, err
-		}
-		usedSlab = s.slabs[slabId]
-		newSlabAddr = usedSlab.addr()
+	var err error
+	slabId, err = s.addSlab()
+	if err != nil {
+		return 0, 0, err
 	}
 
-	usedSlab.free.Set(uint(pos))
-	offset := uint16(pos) * uint16(s.objSize)
-	newObjAddr = ObjAddr(usedSlab.addr()) + ObjAddr(offset)
-	copy(usedSlab.data[offset:], obj)
+	currentSlab = s.slabs[slabId]
+	idx = 0
 
-	return newObjAddr, newSlabAddr, nil
+	return currentSlab.addObjByIdx(idx, obj), currentSlab.addr(), nil
 }
 
 // findSlabByObjAddr takes an object address and finds the correct slab
@@ -86,21 +68,18 @@ func (s *slabPool) findSlabByObjAddr(obj ObjAddr) int {
 // on success the first returned value is the slab index of the added slab
 // on failure the second returned value is set to the error message
 func (s *slabPool) addSlab() (int, error) {
-	data, err := syscall.Mmap(-1, 0, int(s.objSize)*int(s.objsPerSlab), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
 	if err != nil {
 		return 0, err
 	}
-	newSlab := slab{
-		data: data,
-		free: bitset.New(uint(s.objsPerSlab)),
-	}
-	newSlabAddr := newSlab.addr()
+
+	newSlabAddr := addedSlab.addr()
 
 	// find the right location to insert the new slab
 	insertAt := sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() < newSlabAddr })
-	s.slabs = append(s.slabs, slab{})
+	s.slabs = append(s.slabs, &slab{})
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
-	s.slabs[insertAt] = newSlab
+	s.slabs[insertAt] = addedSlab
 
 	return insertAt, nil
 }
@@ -114,15 +93,14 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 		return 0, false
 	}
 
-	for _, slab := range s.slabs {
-		offset := 0
+	for _, currentSlab := range s.slabs {
 		objSize := int(s.objSize)
+
 	OBJECT:
-		for i := uint8(0); i < s.objsPerSlab; i++ {
-			if slab.free.Test(uint(i)) {
-				offset = int(i) * objSize
-				obj := slab.data[offset : offset+objSize]
-				for j := uint8(0); j < s.objSize; j++ {
+		for i := uint(0); i < s.objsPerSlab; i++ {
+			if currentSlab.bitSet().Test(i) {
+				obj := currentSlab.getObjByIdx(i)
+				for j := 0; j < objSize; j++ {
 					if obj[j] != searching[j] {
 						continue OBJECT
 					}
@@ -131,63 +109,34 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 			}
 		}
 	}
+
 	return 0, false
 }
 
 // get retreives and object of the given object address
-// it does not do any sanity checking, if an invalid address is passed
-// anything can happen
 func (s *slabPool) get(obj ObjAddr) []byte {
 	var res []byte
-	sh := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	sh.Data = obj
-	sh.Len = int(s.objSize)
-	sh.Cap = int(s.objSize)
+	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	resHeader.Data = obj
+	resHeader.Len = int(s.objSize)
+	resHeader.Cap = int(s.objSize)
 	return res
 }
 
 // deleteSlab deletes the slab at the given slab index
 // on success it returns nil, otherwise it returns an error
 func (s *slabPool) deleteSlab(slabId int) error {
-	if slabId >= len(s.slabs) {
-		return fmt.Errorf("Delete failed: Slab %d does not exist", slabId)
-	}
-
-	// unmap the data slice of the slab at slabId
 	currentSlab := s.slabs[slabId]
-	err := syscall.Munmap(currentSlab.data)
-	if err != nil {
-		return err
-	}
 
-	// delete the slab at slabId from the slice of slabs
+	// delete slab id from slab slice
 	copy(s.slabs[slabId:], s.slabs[slabId+1:])
-	s.slabs[len(s.slabs)-1] = slab{}
+	s.slabs[len(s.slabs)-1] = &slab{}
 	s.slabs = s.slabs[:len(s.slabs)-1]
 
-	return nil
-}
-
-// delete takes an object address and deletes it from the slabPool
-// on success it returns nil, otherwise it returns an error
-func (s *slabPool) delete(obj ObjAddr) error {
-	slabId := s.findSlabByObjAddr(obj)
-	if slabId < 0 || slabId >= len(s.slabs) {
-		return fmt.Errorf("Delete failed: SlabID for object could not be found")
-	}
-
-	slab := s.slabs[slabId]
-	objPos := uint(obj-slab.addr()) / uint(s.objSize)
-	if objPos >= uint(s.objsPerSlab) {
-		return fmt.Errorf("Delete failed: Could not calculate position of object")
-	}
-	slab.free.Clear(objPos)
-
-	if slab.free.None() {
-		err := s.deleteSlab(slabId)
-		if err != nil {
-			return err
-		}
+	// unmap the slab's memory
+	err := syscall.Munmap(*(*[]byte)(unsafe.Pointer(currentSlab)))
+	if err != nil {
+		return err
 	}
 
 	return nil

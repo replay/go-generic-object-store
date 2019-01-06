@@ -1,7 +1,6 @@
 package gos
 
 import (
-	"fmt"
 	"reflect"
 	"syscall"
 	"unsafe"
@@ -13,13 +12,11 @@ var offsetOfBitSetData = reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
 
 const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
 
-type SlabAddr = uintptr
-
 type slab struct {
 	objSize uint8
 }
 
-func newSlab(objSize uint8, objsPerSlab uint) *slab {
+func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 	bitSet := bitset.New(objsPerSlab)
 
 	bitSetDataLen := len(bitSet.Bytes()) * 8
@@ -28,7 +25,10 @@ func newSlab(objSize uint8, objsPerSlab uint) *slab {
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
 
-	data, _ := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
+	if err != nil {
+		return nil, err
+	}
 
 	// set the objSize property of the new slab
 	data[0] = byte(objSize)
@@ -51,11 +51,11 @@ func newSlab(objSize uint8, objsPerSlab uint) *slab {
 	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
 
 	// return the data byte slice as a slab
-	return (*slab)(unsafe.Pointer(&data[0]))
+	return (*slab)(unsafe.Pointer(&data[0])), nil
 }
 
 func (s *slab) addr() SlabAddr {
-	return SlabAddr(unsafe.Pointer(&s))
+	return SlabAddr(unsafe.Pointer(s))
 }
 
 func (s *slab) bitSet() *bitset.BitSet {
@@ -66,31 +66,23 @@ func (s *slab) objsPerSlab() uint {
 	return s.bitSet().Len()
 }
 
-func (s *slab) getObjectOffset(idx uint) (uintptr, error) {
-	if idx >= s.objsPerSlab() {
-		return 0, fmt.Errorf("getObjectByIndex: Given index %d is above maximum %d", idx, s.objsPerSlab())
-	}
-
+func (s *slab) getObjOffset(idx uint) uintptr {
 	// offset where the object data begins
 	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
 
 	// offset where the object is within the data range
 	objectOffset := uintptr(s.objSize) * uintptr(idx)
 
-	return dataOffset + objectOffset, nil
+	return dataOffset + objectOffset
 }
 
-func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
-	if uint8(len(obj)) != s.objSize {
-		return fmt.Errorf("setObjectByIdx: Wrong object size %d, should be %d", len(obj), s.objSize)
-	}
+func (s *slab) addObjByIdx(idx uint, obj []byte) ObjAddr {
+	offset := s.getObjOffset(idx)
 
-	offset, err := s.getObjectOffset(idx)
-	if err != nil {
-		return err
-	}
+	// objAddr will be the unique identifier of the newly created object
+	objAddr := uintptr(unsafe.Pointer(s)) + offset
 
-	p := unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset)
+	p := unsafe.Pointer(objAddr)
 	for i := 0; i < len(obj); i++ {
 		*((*byte)(p)) = obj[i]
 		p = unsafe.Pointer((uintptr(p)) + 1)
@@ -98,14 +90,11 @@ func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
 
 	s.bitSet().Set(idx)
 
-	return nil
+	return objAddr
 }
 
-func (s *slab) getObjectByIdx(idx uint) ([]byte, error) {
-	offset, err := s.getObjectOffset(idx)
-	if err != nil {
-		return nil, err
-	}
+func (s *slab) getObjByIdx(idx uint) []byte {
+	offset := s.getObjOffset(idx)
 
 	var res []byte
 	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
@@ -113,5 +102,5 @@ func (s *slab) getObjectByIdx(idx uint) ([]byte, error) {
 	resHeader.Cap = 5
 	resHeader.Len = 5
 
-	return res, nil
+	return res
 }

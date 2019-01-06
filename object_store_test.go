@@ -25,7 +25,8 @@ func TestAddingGettingObjects(t *testing.T) {
 
 		Convey("then we should be able to look them up by object address", func() {
 			for obj, addr := range testData {
-				res := os.Get(addr)
+				res, err := os.Get(addr)
+				So(err, ShouldBeNil)
 				So(string(res), ShouldEqual, obj)
 			}
 
