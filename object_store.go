@@ -115,18 +115,24 @@ func (o *ObjectStore) Get(obj ObjAddr) ([]byte, error) {
 
 // Delete deletes an object by object address
 // on success it returns nil, otherwise it returns an error message
-/*func (o *ObjectStore) Delete(obj ObjAddr) error {
-	idx, err := o.getObjectSize(obj)
+func (o *ObjectStore) Delete(obj ObjAddr) error {
+	slabAddr, err := o.getSlabAddress(obj)
 	if err != nil {
 		return err
 	}
 
-	slab := o.lookupTable[idx]
-	if !ok {
-		return fmt.Errorf("ObjectStore: Delete failed slab pool for size %d does not exist", o.lookupTable[idx].size)
+	slab := (*slab)(unsafe.Pointer(slabAddr))
+	empty := slab.delete(obj)
+
+	if empty {
+		err := o.slabPools[slab.objSize].deleteSlab(slabAddr)
+		if err != nil {
+			return err
+		}
 	}
-	return pool.delete(obj)
-}*/
+
+	return nil
+}
 
 // getObjectSize searches, in a descending order sorted slice, for a slab which is likely to contain
 // the object identified by its address

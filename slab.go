@@ -76,6 +76,17 @@ func (s *slab) getObjOffset(idx uint) uintptr {
 	return dataOffset + objectOffset
 }
 
+func (s *slab) getObjIdx(obj ObjAddr) uint {
+	// offset where the object data begins
+	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
+
+	// offset where the object is within the data range
+	objectOffset := obj - dataOffset - uintptr(unsafe.Pointer(s))
+
+	// calculate index based on object offset and object size
+	return uint(objectOffset / uintptr(s.objSize))
+}
+
 func (s *slab) addObjByIdx(idx uint, obj []byte) ObjAddr {
 	offset := s.getObjOffset(idx)
 
@@ -91,6 +102,13 @@ func (s *slab) addObjByIdx(idx uint, obj []byte) ObjAddr {
 	s.bitSet().Set(idx)
 
 	return objAddr
+}
+
+func (s *slab) delete(obj ObjAddr) bool {
+	idx := s.getObjIdx(obj)
+	bitSet := s.bitSet()
+	bitSet.Clear(idx)
+	return bitSet.None()
 }
 
 func (s *slab) getObjByIdx(idx uint) []byte {

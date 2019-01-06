@@ -60,7 +60,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 // where this object is in by looking it up from its slab list
 // it returns the slab index if the correct slab was found, otherwise
 // the return value will be set to the number of known slabs
-func (s *slabPool) findSlabByObjAddr(obj ObjAddr) int {
+func (s *slabPool) findSlabByAddr(obj uintptr) int {
 	return sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() <= obj })
 }
 
@@ -125,16 +125,29 @@ func (s *slabPool) get(obj ObjAddr) []byte {
 
 // deleteSlab deletes the slab at the given slab index
 // on success it returns nil, otherwise it returns an error
-func (s *slabPool) deleteSlab(slabId int) error {
-	currentSlab := s.slabs[slabId]
+func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
+	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
+
+	currentSlab := s.slabs[slabIdx]
 
 	// delete slab id from slab slice
-	copy(s.slabs[slabId:], s.slabs[slabId+1:])
+	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
 	s.slabs[len(s.slabs)-1] = &slab{}
 	s.slabs = s.slabs[:len(s.slabs)-1]
 
+	bitSet := currentSlab.bitSet()
+	sizeOfBitSet := unsafe.Sizeof(*bitSet)
+	bitSetDataLen := len(bitSet.Bytes()) * 8
+	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(s.objSize)*int(bitSet.Len())
+
 	// unmap the slab's memory
-	err := syscall.Munmap(*(*[]byte)(unsafe.Pointer(currentSlab)))
+	var toDelete []byte
+	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&toDelete))
+	sliceHeader.Data = uintptr(unsafe.Pointer(currentSlab))
+	sliceHeader.Len = totalLen
+	sliceHeader.Cap = sliceHeader.Len
+
+	err := syscall.Munmap(toDelete)
 	if err != nil {
 		return err
 	}

@@ -36,3 +36,38 @@ func TestAddingGettingObjects(t *testing.T) {
 		})
 	})
 }
+
+func TestAddingAndDeletingObjects(t *testing.T) {
+	objectsPerSlab := uint(3)
+	expectedSlabs := uint(3)
+	os := NewObjectStore(objectsPerSlab)
+
+	testData := make(map[string]ObjAddr)
+	for i := uint(0); i < objectsPerSlab*expectedSlabs; i++ {
+		testData[fmt.Sprintf("%05d", i)] = 0
+	}
+
+	Convey("When adding test objects to the object store", t, func() {
+		for obj := range testData {
+			objAddr, err := os.Add([]byte(obj))
+			So(err, ShouldBeNil)
+			So(objAddr, ShouldBeGreaterThan, 0)
+			testData[obj] = objAddr
+		}
+
+		Convey("then we should be able to see the right number of slab", func() {
+			So(len(os.slabPools[5].slabs), ShouldEqual, expectedSlabs)
+
+			Convey("then we delete the objects again", func() {
+				for _, obj := range testData {
+					err := os.Delete(obj)
+					So(err, ShouldBeNil)
+				}
+
+				Convey("now there should be no slabs anymore", func() {
+					So(len(os.slabPools[5].slabs), ShouldEqual, 0)
+				})
+			})
+		})
+	})
+}
