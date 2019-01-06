@@ -21,7 +21,9 @@ type slab struct {
 
 func newSlab(objSize uint8, objsPerSlab uint) *slab {
 	bitSet := bitset.New(objsPerSlab)
-	bitSetDataLen := len(bitSet.Bytes())
+
+	bitSetDataLen := len(bitSet.Bytes()) * 8
+	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
 	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
@@ -70,7 +72,7 @@ func (s *slab) getObjectOffset(idx uint) (uint, error) {
 	}
 
 	// offset where the object data begins
-	dataOffset := 1 + sizeOfBitSet + s.bitSet().Bytes()
+	dataOffset := 1 + sizeOfBitSet + uint(len(s.bitSet().Bytes())*8)
 
 	// offset where the object is within the data range
 	objectOffset := uint(s.objSize) * idx
