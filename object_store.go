@@ -8,7 +8,7 @@ import (
 )
 
 // ObjectStore contains a map of slabPools indexed by the size of the objects stored in each pool
-// It also contains a lookup table which is a slice of slabInfos
+// It also contains a lookup table which is a slice of SlabAddr
 // lookupTable is kept sorted in descending order and updated whenever a slab is created or deleted
 type ObjectStore struct {
 	slabPools   map[uint8]*slabPool
@@ -16,6 +16,8 @@ type ObjectStore struct {
 	objsPerSlab uint
 }
 
+// NewObjectStore initializes a new object store with the given number of objects per slab,
+// it returns the object store as a value
 func NewObjectStore(objsPerSlab uint) ObjectStore {
 	return ObjectStore{
 		objsPerSlab: objsPerSlab,
@@ -23,16 +25,20 @@ func NewObjectStore(objsPerSlab uint) ObjectStore {
 	}
 }
 
-// ObjAddr is a uintptr used for storing addresses of objects in slabs
+// ObjAddr is a uintptr used for storing the addresses of objects in slabs
 type ObjAddr = uintptr
 
-// SlabAddr is a uintptr used for storing memory addresses of &slab.data[0] in each slab
+// SlabAddr is a uintptr used for storing the memory addresses of slabs
 type SlabAddr = uintptr
 
+// slabFromAddr takes a SlabAddr and returns a pointer to the slab
 func slabFromSlabAddr(addr SlabAddr) *slab {
 	return (*slab)(unsafe.Pointer(addr))
 }
 
+// objFromObjAddr takes an ObjAddr and an object size, then it returns the
+// object as a byte slice.
+// it is important that the size is correct, otherwise anything can happen
 func objFromObjAddr(obj ObjAddr, size uint8) []byte {
 	var res []byte
 	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
@@ -42,13 +48,14 @@ func objFromObjAddr(obj ObjAddr, size uint8) []byte {
 	return res
 }
 
+// objAddrFromObj takes and object and returns its address as an ObjAddr
 func objAddrFromObj(obj []byte) ObjAddr {
 	return ObjAddr(unsafe.Pointer(&obj[0]))
 }
 
-// Add will add an object to the slab pool of the correct size
-// on success it returns the memory address as an ObjAddr (uintptr) of the added object
-// on failure it returns 0 and an error
+// Add takes an object and adds it to the slab pool of the correct size
+// On success it returns the memory address of the added object as an ObjAddr
+// On failure it returns an error as the second value
 func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 	var oAddr ObjAddr
 	var sAddr SlabAddr
@@ -68,7 +75,8 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 		pool = o.slabPools[size]
 	}
 
-	// try to add the object to a slab in the pool
+	// try to add the object to the pool
+	// there is potential for an error because this involves memory allocations
 	var err error
 	oAddr, sAddr, err = pool.add(obj)
 	if err != nil {
@@ -76,7 +84,7 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 	}
 
 	// when sAddr != 0 this indicates that a new slab was created while adding the object
-	// we must update or lookup table to track the new slab
+	// we must update our lookup table to track the new slab
 	if sAddr != 0 {
 		// we keep the lookup table sorted in descending order and insert new entries at an appropriate position
 		insertAt := sort.Search(len(o.lookupTable), func(i int) bool { return o.lookupTable[i] < sAddr })
@@ -94,14 +102,16 @@ func (o *ObjectStore) addSlabPool(size uint8) {
 }
 
 // Search searches for the given value in the accordingly sized slab pool
-// on success it returns the object address and true
-// on failure it returns 0 and false
+// On success it returns the object address and true
+// On failure it returns 0 and false
 func (o *ObjectStore) Search(searching []byte) (ObjAddr, bool) {
 	var obj ObjAddr
 
 	size := uint8(len(searching))
 	pool, ok := o.slabPools[size]
 	if !ok {
+		// there is no pool for the size of the searched object,
+		// so we can directly give up
 		return 0, false
 	}
 
@@ -114,8 +124,9 @@ func (o *ObjectStore) Search(searching []byte) (ObjAddr, bool) {
 }
 
 // Get retrieves a value by object address
-// on success returns a []byte of appropriate length of the requested object
-// on failure returns nil
+// On success it returns a byte slice of appropriate length,
+// containing the requested object data
+// On failure the second returned value is the error
 func (o *ObjectStore) Get(obj ObjAddr) ([]byte, error) {
 	sAddr, err := o.getSlabAddress(obj)
 	if err != nil {
@@ -127,7 +138,7 @@ func (o *ObjectStore) Get(obj ObjAddr) ([]byte, error) {
 }
 
 // Delete deletes an object by object address
-// on success it returns nil, otherwise it returns an error message
+// On success it returns nil, otherwise it returns an error message
 func (o *ObjectStore) Delete(obj ObjAddr) error {
 	slabAddr, err := o.getSlabAddress(obj)
 	if err != nil {
@@ -137,6 +148,7 @@ func (o *ObjectStore) Delete(obj ObjAddr) error {
 	slab := slabFromSlabAddr(slabAddr)
 	empty := slab.delete(obj)
 
+	// if true then this slab is empty now, so it can be removed
 	if empty {
 		err := o.slabPools[slab.objSize].deleteSlab(slabAddr)
 		if err != nil {
@@ -148,9 +160,9 @@ func (o *ObjectStore) Delete(obj ObjAddr) error {
 }
 
 // getObjectSize searches, in a descending order sorted slice, for a slab which is likely to contain
-// the object identified by its address
-// on success it returns the index position and nil
-// on failure it returns 0 and an error
+// the object identified by the given address
+// On success it returns the slab address as SlabAddr and nil
+// On failure it returns 0 and an error
 func (o *ObjectStore) getSlabAddress(obj ObjAddr) (SlabAddr, error) {
 	idx := sort.Search(len(o.lookupTable), func(i int) bool { return o.lookupTable[i] <= obj })
 	ok := idx < len(o.lookupTable) && idx >= 0
