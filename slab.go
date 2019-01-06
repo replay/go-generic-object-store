@@ -9,6 +9,7 @@ import (
 )
 
 var offsetOfBitSetData = reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
+var mask64 uint64 = 0xFFFFFFFFFFFFFFFF
 
 const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
 
@@ -106,10 +107,26 @@ func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
 	// objAddr will be the unique identifier of the newly created object
 	objAddr := uintptr(unsafe.Pointer(s)) + offset
 
-	p := unsafe.Pointer(objAddr)
-	for i := 0; i < len(obj); i++ {
-		*((*byte)(p)) = obj[i]
-		p = unsafe.Pointer((uintptr(p)) + 1)
+	var i uintptr
+	len := uintptr(len(obj))
+	src := (*reflect.SliceHeader)(unsafe.Pointer(&obj)).Data
+
+	if len < 8 {
+		*((*uint64)(unsafe.Pointer(objAddr))) <<= ((8 - len) * 8)
+		*((*uint64)(unsafe.Pointer(objAddr))) |= (*((*uint64)(unsafe.Pointer(src))) & (mask64 >> ((8 - len) * 8)))
+	} else {
+		for ; i < len; i = i + 8 {
+			*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
+		}
+
+		remainder := len % 8
+		if remainder == 0 {
+			s.bitSet().Set(idx)
+			return objAddr, true
+		}
+
+		*((*uint64)(unsafe.Pointer(objAddr + i))) <<= (remainder * 8)
+		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (mask64 >> ((8 - len) * 8)))
 	}
 
 	s.bitSet().Set(idx)
