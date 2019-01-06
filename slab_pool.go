@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"syscall"
@@ -32,28 +33,28 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 // the third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
-	var idx uint
+	var objAddr ObjAddr
 	var currentSlab *slab
-	var slabId int
 
-	for slabId, currentSlab = range s.slabs {
-		idx, success = currentSlab.bitSet().NextClear(0)
-		if !success {
-			continue
+	for _, currentSlab = range s.slabs {
+		objAddr, success = currentSlab.addObj(obj)
+		if success {
+			return objAddr, 0, nil
 		}
-		return currentSlab.addObjByIdx(idx, obj), 0, nil
 	}
 
 	var err error
-	slabId, err = s.addSlab()
+	currentSlab, err = s.addSlab()
 	if err != nil {
 		return 0, 0, err
 	}
 
-	currentSlab = s.slabs[slabId]
-	idx = 0
+	objAddr, success = currentSlab.addObj(obj)
+	if !success {
+		return 0, 0, fmt.Errorf("Add: Failed adding object to new slab")
+	}
 
-	return currentSlab.addObjByIdx(idx, obj), currentSlab.addr(), nil
+	return objAddr, currentSlab.addr(), nil
 }
 
 // findSlabByObjAddr takes an object address and finds the correct slab
@@ -65,12 +66,12 @@ func (s *slabPool) findSlabByAddr(obj uintptr) int {
 }
 
 // addSlab adds another slab to the pool and initalizes the related structs
-// on success the first returned value is the slab index of the added slab
+// on success the first returned value is a pointer to the new slab
 // on failure the second returned value is set to the error message
-func (s *slabPool) addSlab() (int, error) {
+func (s *slabPool) addSlab() (*slab, error) {
 	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	newSlabAddr := addedSlab.addr()
@@ -81,7 +82,7 @@ func (s *slabPool) addSlab() (int, error) {
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
 	s.slabs[insertAt] = addedSlab
 
-	return insertAt, nil
+	return addedSlab, nil
 }
 
 // search searches for a byte slice that must have the length of
@@ -115,12 +116,7 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 // get retreives and object of the given object address
 func (s *slabPool) get(obj ObjAddr) []byte {
-	var res []byte
-	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
-	resHeader.Data = obj
-	resHeader.Len = int(s.objSize)
-	resHeader.Cap = int(s.objSize)
-	return res
+	return objFromObjAddr(obj, s.objSize)
 }
 
 // deleteSlab deletes the slab at the given slab index
@@ -135,7 +131,7 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
 	s.slabs[len(s.slabs)-1] = &slab{}
 	s.slabs = s.slabs[:len(s.slabs)-1]
 
-	totalLen, _ := slabLengthFromAttributes(currentSlab.objSize, currentSlab.bitSet().Len())
+	totalLen := int(currentSlab.getTotalLength())
 
 	// unmap the slab's memory
 	var toDelete []byte
