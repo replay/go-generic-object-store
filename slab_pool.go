@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -112,6 +113,55 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	}
 
 	return 0, false
+}
+
+func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
+	wg := sync.WaitGroup{}
+	resultSet := make([]ObjAddr, len(searching))
+	type result struct {
+		idx  uint
+		addr ObjAddr
+	}
+	resChan := make(chan result)
+	objSize := int(s.objSize)
+
+	wg.Add(len(s.slabs))
+	for i := range s.slabs {
+		go func(currentSlab *slab) {
+			defer wg.Done()
+
+			for j := uint(0); j < s.objsPerSlab; j++ {
+				if currentSlab.bitSet().Test(j) {
+					storedObj := currentSlab.getObjByIdx(j)
+
+				SEARCH:
+					for k, searchedObj := range searching {
+						for l := 0; l < objSize; l++ {
+							if storedObj[l] != searchedObj[l] {
+								continue SEARCH
+							}
+
+						}
+
+						resChan <- result{
+							idx:  uint(k),
+							addr: objAddrFromObj(storedObj),
+						}
+					}
+				}
+			}
+		}(s.slabs[i])
+	}
+	go func() {
+		wg.Wait()
+		close(resChan)
+	}()
+
+	for res := range resChan {
+		resultSet[res.idx] = res.addr
+	}
+
+	return resultSet
 }
 
 // get retreives and object of the given object address

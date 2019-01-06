@@ -118,3 +118,41 @@ func TestDeletingAddedObjects(t *testing.T) {
 		})
 	})
 }
+
+func TestBatchSearchingObjects(t *testing.T) {
+	objSize := uint8(5)
+	objsPerSlab := uint(10)
+	expectedSlabs := uint(100)
+	sp := NewSlabPool(objSize, objsPerSlab)
+
+	Convey(fmt.Sprintf("When adding %d objects to the pool", objsPerSlab*expectedSlabs), t, func() {
+		for i := uint(0); i < objsPerSlab*expectedSlabs; i++ {
+			sp.add([]byte(fmt.Sprintf("%05d", i)))
+		}
+
+		Convey("we should be able to search for them", func() {
+			searchTerms := [][]byte{
+				[]byte("00100"),
+				[]byte("00320"),
+				[]byte("ccccc"),
+				[]byte("00999"),
+				[]byte("00998"),
+				[]byte("abcde"),
+				[]byte("00000"),
+				[]byte("00345"),
+			}
+			searchResults := sp.searchBatched(searchTerms)
+
+			// these two search terms should not have been found
+			So(searchResults[2], ShouldEqual, 0)
+			So(searchResults[5], ShouldEqual, 0)
+
+			So(string(objFromObjAddr(searchResults[0], 5)), ShouldEqual, string(searchTerms[0]))
+			So(string(objFromObjAddr(searchResults[1], 5)), ShouldEqual, string(searchTerms[1]))
+			So(string(objFromObjAddr(searchResults[3], 5)), ShouldEqual, string(searchTerms[3]))
+			So(string(objFromObjAddr(searchResults[4], 5)), ShouldEqual, string(searchTerms[4]))
+			So(string(objFromObjAddr(searchResults[6], 5)), ShouldEqual, string(searchTerms[6]))
+			So(string(objFromObjAddr(searchResults[7], 5)), ShouldEqual, string(searchTerms[7]))
+		})
+	})
+}
