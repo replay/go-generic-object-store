@@ -9,7 +9,7 @@ go-generic-object-store is a small, fast, light-weight, in-memory, off-heap libr
 ### Object Store
 At the top level of the library is the Object Store. You can have multiple instances of different `ObjectStore`s. Each `ObjectStore` has a pool of slabs and a lookup table. The following diagram should help illuminate these concepts.
 
-![object store diagram](object_store.png)
+![object store diagram](docs/object_store.png)
 
 #### Slab Pools
 
@@ -18,14 +18,16 @@ At the top level of the library is the Object Store. You can have multiple insta
 Fragmentation is a concern if objects are frequently added and deleted.
 
 #### Lookup Table
-`lookupTable` is a `[]SlabAddr`. A `SlabAddr` is a uintptr which stores the memory address of a slab.
+`lookupTable` is a `[]SlabAddr`. `SlabAddr` is a uintptr which stores the memory address of a slab.
 
 #### Slab
-`slab` is a struct which contains a single field: `data []byte`. `data` is MMapped memory which is ignored by the Go GC. We don't actually keep references to any `slab` structs. The `[]byte` itself is converted into the struct when we need to manipulate any of the stored data.
+`slab` is a struct which contains a single field: `objSize uint8`. All of the data used by slabs is MMapped memory which is ignored by the Go GC. We don't actually hold references to any `slab` structs. When we need to access the data contained in a `slab` we convert the starting memory address of the `slab` into a `[]byte`.
 * The 1st byte in a `slab` is the object size of all stored objects inside the `slab` (uint8).
 * The 2nd through 9th (or 5th if running on 32-bit architecture) bytes in a `slab` is the number of objects stored inside the `slab` (uint).
 * The next part of the `[]byte` holds the `[]uint64` data from a bitset.BitSet
 * Finally, the rest of the space in a `slab` is dedicated storage for objects. The required space is calculated by multiplying object size by objects per slab.
+
+![slab diagram](docs/slab.png)
 
 ## Limitations
 
