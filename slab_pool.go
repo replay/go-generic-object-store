@@ -15,8 +15,8 @@ type slabPool struct {
 	objsPerSlab uint
 }
 
-func NewSlabPool(objSize uint8, objsPerSlab uint) slabPool {
-	return slabPool{
+func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
+	return &slabPool{
 		objSize:     objSize,
 		objsPerSlab: objsPerSlab,
 	}

@@ -11,7 +11,7 @@ import (
 // It also contains a lookup table which is a slice of slabInfos
 // lookupTable is kept sorted in descending order and updated whenever a slab is created or deleted
 type ObjectStore struct {
-	slabPools   map[uint8]slabPool
+	slabPools   map[uint8]*slabPool
 	lookupTable []SlabAddr
 	objsPerSlab uint
 }
@@ -19,7 +19,7 @@ type ObjectStore struct {
 func NewObjectStore(objsPerSlab uint) ObjectStore {
 	return ObjectStore{
 		objsPerSlab: objsPerSlab,
-		slabPools:   make(map[uint8]slabPool),
+		slabPools:   make(map[uint8]*slabPool),
 	}
 }
 
