@@ -89,16 +89,24 @@ func (s *slab) setObjectByIdx(idx uint, obj []byte) error {
 		return err
 	}
 
-	data := *(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset))
-	copy(data, obj)
+	p := unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset)
+	for i := 0; i < len(obj); i++ {
+		*((*byte)(p)) = obj[i]
+		p = unsafe.Pointer((uintptr(p)) + 1)
+	}
 	return nil
 }
 
-func (s *slab) getObjectByIdx(idx uint, obj []byte) ([]byte, error) {
+func (s *slab) getObjectByIdx(idx uint) ([]byte, error) {
 	offset, err := s.getObjectOffset(idx)
 	if err != nil {
 		return nil, err
 	}
 
-	return (*(*[]byte)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + offset)))[:s.objSize], nil
+	var res []byte
+	resHeader := (*reflect.SliceHeader)(unsafe.Pointer(&res))
+	resHeader.Data = uintptr(unsafe.Pointer(s)) + offset
+	resHeader.Cap = 5
+	resHeader.Len = 5
+	return res, nil
 }
