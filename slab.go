@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"math"
 	"reflect"
 	"syscall"
 	"unsafe"
@@ -8,22 +9,34 @@ import (
 	"github.com/willf/bitset"
 )
 
+// offsetOfBitSetData is the offset of the data property within the BitSet struct
 var offsetOfBitSetData = reflect.TypeOf(bitset.BitSet{}).Field(1).Offset
-var mask64 uint64 = 0xFFFFFFFFFFFFFFFF
 
+// sizeOfBitSet is the size of the BitSet struct excluding the data that's used
+// by its internal byte slice
 const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
 
+// slabs are actually much bigger than the slab struct. We only use it
+// to look at the first byte of each slab as uint8, because that's where
+// objSize is stored
 type slab struct {
 	objSize uint8
 }
 
+// newSlab initializes a new slab based on the given parameters. It can
+// potentially error if the memory allocation call fails
+// On success the first return value is a pointer to the new slab and the
+// second value is nil
+// On failure the second returned value is an error
 func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 	bitSet := bitset.New(objsPerSlab)
 
 	bitSetDataLen := len(bitSet.Bytes()) * 8
-	sizeOfBitSet := unsafe.Sizeof(*bitSet)
 
-	// 1 byte for the objSize, the BitSet struct, the BitSet data, the object slots (size * number)
+	// 1 byte for the objSize, that's a uint8
+	// sizeOfBitSet is the BitSet, excluding the data used by its data slice
+	// bitSetDataLen is the data used by the BitSets data slice
+	// the object slots take up (object size * object count) bytes
 	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
 	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
@@ -33,47 +46,55 @@ func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 	// set the objSize property of the new slab
 	data[0] = byte(objSize)
 
-	// create temporary byte slice that accesses bitSet as underlying data
-	// that way we can read the bitSet like a byte slice
+	// create temporary byte slice that accesses bitSet as underlying data,
+	// that way we can read the BitSet like a byte slice
 	var copyFrom []byte
 	copyFromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&copyFrom))
 	copyFromHeader.Data = uintptr(unsafe.Pointer(bitSet))
 	copyFromHeader.Cap = int(sizeOfBitSet)
 	copyFromHeader.Len = int(sizeOfBitSet)
 
-	// copy the bitSet data structure into memory area at offset 1
+	// copy the BitSet data structure into memory area at offset 1
 	copy(data[1:], copyFrom)
 
-	// get the byte slice header of bitset's data property
+	// get the byte slice header of BitSets data property
 	bitSetDataSlice := (*reflect.SliceHeader)(unsafe.Pointer(&data[1+offsetOfBitSetData]))
 
-	// set the data pointer to point at the address right after the bitSet struct
+	// set the data pointer to point at the address right after the BitSet instance
 	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
 
-	// return the data byte slice as a slab
+	// return the data byte slice casted as a slab
 	return (*slab)(unsafe.Pointer(&data[0])), nil
 }
 
+// addr returns this slabs address as a SlabAddr type
 func (s *slab) addr() SlabAddr {
 	return SlabAddr(unsafe.Pointer(s))
 }
 
+// bitSet returns this slabs BitSet as a pointer to a BitSet
 func (s *slab) bitSet() *bitset.BitSet {
 	return (*bitset.BitSet)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + 1))
 }
 
+// objsPerSlab returns the max number of objects each slab can contain
 func (s *slab) objsPerSlab() uint {
 	return s.bitSet().Len()
 }
 
+// getTotalLength returns the total size of this slab in bytes
 func (s *slab) getTotalLength() uintptr {
 	return s.getDataOffset() + uintptr(s.objSize)*uintptr(s.objsPerSlab())
 }
 
+// getDataOffset returns the offset at which the stored objects start
 func (s *slab) getDataOffset() uintptr {
+	// multiply the BitSet bytes by 8 because it returns a slice of uint64
 	return uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
 }
 
+// getObjOffset returns the offset at which the object
+// at the given index is written
 func (s *slab) getObjOffset(idx uint) uintptr {
 	// offset where the object data begins
 	dataOffset := s.getDataOffset()
@@ -84,8 +105,10 @@ func (s *slab) getObjOffset(idx uint) uintptr {
 	return dataOffset + objectOffset
 }
 
+// getObjIdx takes an object address and returns the object index
+// within this slice
 func (s *slab) getObjIdx(obj ObjAddr) uint {
-	// offset where the object data begins
+	// offset where the slices object data begins
 	dataOffset := uintptr(1) + sizeOfBitSet + uintptr(len(s.bitSet().Bytes())*8)
 
 	// offset where the object is within the data range
@@ -95,45 +118,51 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 	return uint(objectOffset / uintptr(s.objSize))
 }
 
+// addObj takes an object and adds it to this slice if there is
+// free space for it
+// On success the first return value is the ObjAddr of the newly
+// added object and the second value is true
+// On failure the secpnd return value is false
 func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
 	bitSet := s.bitSet()
 	idx, success := bitSet.NextClear(0)
 	if !success {
+		// there is no free space for another object
 		return 0, false
 	}
 
 	offset := s.getObjOffset(idx)
 
-	// objAddr will be the unique identifier of the newly created object
+	// objAddr is used as the unique identifier of the newly created object
 	objAddr := uintptr(unsafe.Pointer(s)) + offset
 
-	var i uintptr
 	len := uintptr(len(obj))
 	src := (*reflect.SliceHeader)(unsafe.Pointer(&obj)).Data
 
-	if len < 8 {
-		*((*uint64)(unsafe.Pointer(objAddr))) <<= ((8 - len) * 8)
-		*((*uint64)(unsafe.Pointer(objAddr))) |= (*((*uint64)(unsafe.Pointer(src))) & (mask64 >> ((8 - len) * 8)))
-	} else {
+	var i uintptr
+	if len > 8 {
+		// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
 		for ; i < len; i = i + 8 {
 			*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
 		}
-
-		remainder := len % 8
-		if remainder == 0 {
-			s.bitSet().Set(idx)
-			return objAddr, true
-		}
-
-		*((*uint64)(unsafe.Pointer(objAddr + i))) <<= (remainder * 8)
-		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (mask64 >> ((8 - len) * 8)))
 	}
 
+	// if the length is not divisible by 8 we need to copy the left over data
+	remainder := len % 8
+	if remainder != 0 {
+		*((*uint64)(unsafe.Pointer(objAddr + i))) <<= (remainder * 8)
+		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (math.MaxUint64 >> ((8 - len) * 8)))
+	}
+
+	// set the according object slot as used
 	s.bitSet().Set(idx)
 
 	return objAddr, true
 }
 
+// delete deletes the object at the given object address
+// it returns a boolean which indicates if after this delete the slab is empty or not
+// on true it is empty, otherwise there is still some data in it
 func (s *slab) delete(obj ObjAddr) bool {
 	idx := s.getObjIdx(obj)
 	bitSet := s.bitSet()
@@ -141,6 +170,7 @@ func (s *slab) delete(obj ObjAddr) bool {
 	return bitSet.None()
 }
 
+// getObjByIdx returns the object at the given index as a byte slice
 func (s *slab) getObjByIdx(idx uint) []byte {
 	return objFromObjAddr(uintptr(unsafe.Pointer(s))+s.getObjOffset(idx), s.objSize)
 }
