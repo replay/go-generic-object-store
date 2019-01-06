@@ -17,7 +17,8 @@ func TestSlabBitset(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
 		objsPerSlab := uint(10000)
-		slab := newSlab(objSize, objsPerSlab)
+		slab, err := newSlab(objSize, objsPerSlab)
+		So(err, ShouldBeNil)
 		So(slab.objSize, ShouldEqual, objSize)
 		So(slab.objsPerSlab(), ShouldEqual, objsPerSlab)
 		Convey("we should be able to obtain and use the bitset from it", func() {
@@ -46,16 +47,15 @@ func TestSettingGettingObjects(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
 		objsPerSlab := uint(100)
-		slab := newSlab(objSize, objsPerSlab)
+		slab, err := newSlab(objSize, objsPerSlab)
+		So(err, ShouldBeNil)
 
 		Convey("we should be able to set an object", func() {
 			objValue := "abcde"
-			err := slab.setObjectByIdx(0, []byte(objValue))
-			So(err, ShouldBeNil)
+			slab.addObjByIdx(0, []byte(objValue))
 
 			Convey("and retreive it again", func() {
-				retreived, err := slab.getObjectByIdx(0)
-				So(err, ShouldBeNil)
+				retreived := slab.getObjByIdx(0)
 				So(string(retreived), ShouldEqual, objValue)
 			})
 		})
@@ -66,19 +66,18 @@ func TestSettingGettingManyObjects(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
 		objsPerSlab := uint(100)
-		slab := newSlab(objSize, objsPerSlab)
+		slab, err := newSlab(objSize, objsPerSlab)
+		So(err, ShouldBeNil)
 
 		Convey("we should be able to fill it up with objects", func() {
 			for i := uint(0); i < objsPerSlab; i++ {
 				value := fmt.Sprintf("%05d", i)
-				err := slab.setObjectByIdx(i, []byte(value))
-				So(err, ShouldBeNil)
+				slab.addObjByIdx(i, []byte(value))
 			}
 
 			Convey("and retreive all of them again", func() {
 				for i := uint(0); i < objsPerSlab; i++ {
-					obtainedValue, err := slab.getObjectByIdx(i)
-					So(err, ShouldBeNil)
+					obtainedValue := slab.getObjByIdx(i)
 					So(string(obtainedValue), ShouldEqual, fmt.Sprintf("%05d", i))
 				}
 			})

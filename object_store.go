@@ -11,10 +11,10 @@ import (
 type ObjectStore struct {
 	slabPools   map[uint8]slabPool
 	lookupTable []slabInfo
-	objsPerSlab uint8
+	objsPerSlab uint
 }
 
-func NewObjectStore(objsPerSlab uint8) ObjectStore {
+func NewObjectStore(objsPerSlab uint) ObjectStore {
 	return ObjectStore{
 		objsPerSlab: objsPerSlab,
 		slabPools:   make(map[uint8]slabPool),
@@ -116,17 +116,18 @@ func (o *ObjectStore) Get(obj ObjAddr) []byte {
 
 // Delete deletes an object by object address
 // on success it returns nil, otherwise it returns an error message
-func (o *ObjectStore) Delete(obj ObjAddr) error {
+/*func (o *ObjectStore) Delete(obj ObjAddr) error {
 	idx, err := o.getObjectSize(obj)
 	if err != nil {
 		return err
 	}
-	pool, ok := o.slabPools[o.lookupTable[idx].size]
+
+	slab := o.lookupTable[idx]
 	if !ok {
 		return fmt.Errorf("ObjectStore: Delete failed slab pool for size %d does not exist", o.lookupTable[idx].size)
 	}
 	return pool.delete(obj)
-}
+}*/
 
 // getObjectSize searches, in a descending order sorted slice, for a slab which is likely to contain
 // the object identified by its address
