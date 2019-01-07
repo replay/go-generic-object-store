@@ -2,9 +2,7 @@ package gos
 
 import (
 	"fmt"
-	"reflect"
 	"testing"
-	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -86,59 +84,4 @@ func TestSettingGettingManyObjects(t *testing.T) {
 			})
 		})
 	})
-}
-
-func TestConversion(t *testing.T) {
-	type myType struct {
-		a     uint8
-		value uint64
-	}
-	myVar1 := myType{a: 1, value: 12345}
-
-	var copyFrom []byte
-	copyFromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&copyFrom))
-	copyFromHeader.Data = uintptr(unsafe.Pointer(&myVar1))
-	copyFromHeader.Cap = 16
-	copyFromHeader.Len = 16
-
-	copyTo := make([]byte, len(copyFrom))
-
-	for i := range copyFrom {
-		copyTo[i] = copyFrom[i]
-	}
-
-	myVar2 := (*myType)(unsafe.Pointer(&copyFrom[0]))
-	myVar3 := (*myType)(unsafe.Pointer(&copyTo[0]))
-
-	if myVar2.value != myVar3.value {
-		t.Fatalf("Expected myVar3.value to be %d, but it is %d", myVar2.value, myVar3.value)
-	}
-}
-
-func TestFastCopy(t *testing.T) {
-
-	fastCopy := func(dst, src, len uintptr) {
-		var i uintptr
-		for ; i < len; i = i + 8 {
-			*(*uint64)(unsafe.Pointer(dst + i)) = *(*uint64)(unsafe.Pointer(src + i))
-		}
-
-		remainder := len % 8
-		if remainder == 0 {
-			return
-		}
-
-		for j := uintptr(0); j < remainder; j++ {
-			*((*byte)(unsafe.Pointer(dst + i + j))) = *((*byte)(unsafe.Pointer(src + i + j)))
-		}
-	}
-
-	testValueToCopy := []byte("123456781234567890")
-	testDestination := make([]byte, len(testValueToCopy))
-
-	fastCopy((*reflect.SliceHeader)(unsafe.Pointer(&testDestination)).Data, (*reflect.SliceHeader)(unsafe.Pointer(&testValueToCopy)).Data, uintptr(len(testValueToCopy)))
-
-	if string(testDestination) != string(testValueToCopy) {
-		t.Fatalf("Destination and source look different")
-	}
 }

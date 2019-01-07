@@ -88,6 +88,36 @@ func TestAddingSearchingObject(t *testing.T) {
 	})
 }
 
+func TestAddingSearchingObjectInManySlabs(t *testing.T) {
+	objSize := uint8(5)
+	objsPerSlab := uint(10)
+	expectedSlabs := uint(100)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	Convey(fmt.Sprintf("When adding %d objects to the pool", objsPerSlab*expectedSlabs), t, func() {
+		for i := uint(0); i < expectedSlabs*objsPerSlab; i++ {
+			objAddr, _, err := sp.add([]byte(fmt.Sprintf("%05d", i)))
+			So(err, ShouldBeNil)
+			So(objAddr, ShouldBeGreaterThan, 0)
+		}
+
+		Convey("we should be able to find any added object with the search method", func() {
+			searchObjects := []string{"00325", "00999", "00000", "00010"}
+
+			for _, searchObject := range searchObjects {
+				addr, success := sp.search([]byte(searchObject))
+				So(success, ShouldBeTrue)
+				obj := sp.get(addr)
+				So(string(obj), ShouldEqual, searchObject)
+			}
+
+			Convey("we should not be able to find an object that doesn't exist", func() {
+				_, success := sp.search([]byte("abcde"))
+				So(success, ShouldBeFalse)
+			})
+		})
+	})
+}
+
 func TestDeletingAddedObjects(t *testing.T) {
 	testValue := "abcde"
 	objSize := uint8(5)

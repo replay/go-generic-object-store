@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -103,30 +104,42 @@ func (s *slabPool) addSlab() (*slab, error) {
 // When found it returns the object address and true,
 // otherwise the second returned value is false
 func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
-	if len(searching) != int(s.objSize) {
-		// if the size of the searched object does not match
-		// the object size of this slab, then give up
-		return 0, false
-	}
+	wg := sync.WaitGroup{}
+	objSize := int(s.objSize)
 
+	var result uintptr
+
+	wg.Add(len(s.slabs))
 	for _, currentSlab := range s.slabs {
-		objSize := int(s.objSize)
+		go func(currentSlab *slab) {
+			defer wg.Done()
 
-	OBJECT:
-		for i := uint(0); i < s.objsPerSlab; i++ {
-			if currentSlab.bitSet().Test(i) {
-				obj := currentSlab.getObjByIdx(i)
-				for j := 0; j < objSize; j++ {
-					if obj[j] != searching[j] {
-						continue OBJECT
+		OBJECT:
+			for i := uint(0); i < s.objsPerSlab; i++ {
+				if currentSlab.bitSet().Test(i) {
+					obj := currentSlab.getObjByIdx(i)
+					for j := 0; j < objSize; j++ {
+						if obj[j] != searching[j] {
+							continue OBJECT
+						}
 					}
+
+					// found it, store the result atomically
+					atomic.StoreUintptr(&result, objAddrFromObj(obj))
+					return
 				}
-				return ObjAddr(unsafe.Pointer(&obj[0])), true
+
+				// if result has been found by another thread we can exit this thread
+				if atomic.LoadUintptr(&result) > 0 {
+					return
+				}
 			}
-		}
+		}(currentSlab)
 	}
 
-	return 0, false
+	wg.Wait()
+
+	return result, result > 0
 }
 
 // searchBatched searches for a batch of search objects.
@@ -142,13 +155,7 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 
 	// preallocate the result set that will be returned
 	resultSet := make([]ObjAddr, len(searching))
-
-	// create a channel of result structs to push the search results through
-	type result struct {
-		idx  uint
-		addr ObjAddr
-	}
-	resChan := make(chan result)
+	resultsLeft := int32(len(searching))
 	objSize := int(s.objSize)
 
 	wg.Add(len(s.slabs))
@@ -176,28 +183,23 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 
 						}
 
-						// there was a match between a searched object and a stored object
-						// so we push it back through the result channel
-						resChan <- result{
-							idx:  uint(k),
-							addr: objAddrFromObj(storedObj),
-						}
+						// found one search term, store it in the right location atomically
+						atomic.StoreUintptr(&resultSet[k], objAddrFromObj(storedObj))
+
+						// decrease number of searches left by one
+						atomic.AddInt32(&resultsLeft, -1)
 					}
+				}
+
+				if atomic.LoadInt32(&resultsLeft) == 0 {
+					// all search terms have been found, exit routine
+					return
 				}
 			}
 		}(s.slabs[i])
 	}
 
-	// wait for all search routines to finish, then close the result channel
-	go func() {
-		wg.Wait()
-		close(resChan)
-	}()
-
-	// read the result channel and feed the results into the result set
-	for res := range resChan {
-		resultSet[res.idx] = res.addr
-	}
+	wg.Wait()
 
 	return resultSet
 }
