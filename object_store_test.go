@@ -2,6 +2,7 @@ package gos
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -70,6 +71,49 @@ func TestAddingAndDeletingObjects(t *testing.T) {
 
 				Convey("now there should be no slabs anymore", func() {
 					So(len(os.slabPools[5].slabs), ShouldEqual, 0)
+				})
+			})
+		})
+	})
+}
+
+func TestAddingAndDeletingLargeNumberOfObjects(t *testing.T) {
+	objectsPerSlab := uint(100)
+	expectedSlabs := uint(100)
+	objectSizes := []int{1, 4, 5, 50, 255}
+	testData := make(map[string]ObjAddr)
+
+	for i := uint(0); i < objectsPerSlab*expectedSlabs; i++ {
+		testData[fmt.Sprintf("%0"+strconv.Itoa(objectSizes[i%uint(len(objectSizes))])+"d", i)] = 0
+	}
+
+	os := NewObjectStore(objectsPerSlab)
+
+	Convey("When adding lots of test data to object store", t, func() {
+		for k := range testData {
+			objAddr, err := os.Add([]byte(k))
+			So(err, ShouldBeNil)
+			So(objAddr, ShouldBeGreaterThan, 0)
+			testData[k] = objAddr
+		}
+
+		Convey("then we should be able to retrieve each of them", func() {
+			for testValue, objAddr := range testData {
+				retrievedValue, err := os.Get(objAddr)
+				So(err, ShouldBeNil)
+				So(string(retrievedValue), ShouldEqual, testValue)
+			}
+
+			Convey("then we can delete them again", func() {
+				for _, objAddr := range testData {
+					err := os.Delete(objAddr)
+					So(err, ShouldBeNil)
+				}
+
+				Convey("after deleting everything there should be no slabs left anymore", func() {
+					for _, slabPool := range os.slabPools {
+						So(len(slabPool.slabs), ShouldBeZeroValue)
+					}
 				})
 			})
 		})
