@@ -15,7 +15,7 @@ func TestAddingGettingObjects13(t *testing.T) {
 	testAddingGettingObjects(t, 50, 1000000000000, 1000000005000)
 }
 
-func testAddingGettingObjects(t *testing.T, objPerSlab, start, stop int) {
+func testAddingGettingObjects(t *testing.T, objPerSlab, start, stop uint64) {
 	os := NewObjectStore(uint(objPerSlab))
 
 	testData := make(map[string]ObjAddr)
