@@ -63,16 +63,16 @@ func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 	// set the data pointer to point at the address right after the BitSet instance
 	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
 
-	// return the data byte slice casted as a slab
+	// return the data byte slice converted to a slab pointer
 	return (*slab)(unsafe.Pointer(&data[0])), nil
 }
 
-// addr returns this slabs address as a SlabAddr type
+// addr returns this slabs' address as a SlabAddr type
 func (s *slab) addr() SlabAddr {
 	return SlabAddr(unsafe.Pointer(s))
 }
 
-// bitSet returns this slabs BitSet as a pointer to a BitSet
+// bitSet returns this slabs' BitSet as a pointer
 func (s *slab) bitSet() *bitset.BitSet {
 	return (*bitset.BitSet)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + 1))
 }
@@ -122,7 +122,7 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // free space for it
 // On success the first return value is the ObjAddr of the newly
 // added object and the second value is true
-// On failure the secpnd return value is false
+// On failure the second return value is false
 func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
 	bitSet := s.bitSet()
 	idx, success := bitSet.NextClear(0)

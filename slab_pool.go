@@ -68,11 +68,11 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 }
 
 // findSlabByObjAddr takes an object address or slab address and then
-// finds the slab where this object is inside by looking it up from
+// finds the slab where this object exists by looking it up from
 // its slab list.
 // It returns the slab index if the correct slab was found, otherwise
 // the return value is the number of known slabs.
-// For the lookup to succeed it relies on s.slabs to be sorted
+// For the lookup to succeed it relies on s.slabs to be sorted in descending order
 func (s *slabPool) findSlabByAddr(obj uintptr) int {
 	return sort.Search(len(s.slabs), func(i int) bool { return s.slabs[i].addr() <= obj })
 }
@@ -99,7 +99,7 @@ func (s *slabPool) addSlab() (*slab, error) {
 }
 
 // search searches for a byte slice with the length of
-// this slabs objectSize.
+// this slab's objectSize.
 // When found it returns the object address and true,
 // otherwise the second returned value is false
 func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
@@ -140,7 +140,7 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 	wg := sync.WaitGroup{}
 
-	// preallocate the resul set that will be returned
+	// preallocate the result set that will be returned
 	resultSet := make([]ObjAddr, len(searching))
 
 	// create a channel of result structs to push the search results through
