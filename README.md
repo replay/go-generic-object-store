@@ -21,10 +21,10 @@ Fragmentation is a concern if objects are frequently added and deleted.
 `lookupTable` is a `[]SlabAddr`. `SlabAddr` is a uintptr which stores the memory address of a slab.
 
 #### Slab
-`slab` is a struct which contains a single field: `objSize uint8`. All of the data used by slabs is MMapped memory which is ignored by the Go GC. We don't actually hold references to any `slab` structs. When we need to access the data contained in a `slab` we convert the starting memory address of the `slab` into a `[]byte`.
+`slab` is a struct which contains a single field: `objSize uint8`. All of the data used by slabs is ***MMapped*** memory which is ignored by the Go GC. We don't actually hold references to any `slab` structs. When we need to access the data contained in a `slab` we convert the starting memory address of the `slab` into a `[]byte`, or adjust the starting address by known offsets and convert the underlying data into a different struct.
 * The 1st byte in a `slab` is the object size of all stored objects inside the `slab` (uint8).
 * The 2nd through 9th (or 5th if running on 32-bit architecture) bytes in a `slab` is the number of objects stored inside the `slab` (uint).
-* The next part of the `[]byte` holds the `[]uint64` data from a bitset.BitSet
+* The next part of the `[]byte` holds the ***slice header*** and ***data*** from the `[]uint64` of `bitset.BitSet.set`.
 * Finally, the rest of the space in a `slab` is dedicated storage for objects. The required space is calculated by multiplying object size by objects per slab.
 
 ![slab diagram](docs/slab.png)
@@ -32,3 +32,7 @@ Fragmentation is a concern if objects are frequently added and deleted.
 ## Limitations
 
 * 255 maximum bytes per object stored in a slab
+
+## See Also
+
+* We use https://github.com/willf/bitset for keeping track of free object slots in slabs.
