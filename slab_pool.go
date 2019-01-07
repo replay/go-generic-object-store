@@ -36,7 +36,7 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success bool
 	var objAddr ObjAddr
-	var currentSlab *sla
+	var currentSlab *slab
 
 	// find a slab where the addObj call succeeds
 	// on full slabs the returned success value is false
