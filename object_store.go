@@ -7,6 +7,72 @@ import (
 	"unsafe"
 )
 
+// MemStat stores memory usage statistics about a slab pool
+type MemStat struct {
+	ObjSize uint8
+	MemUsed uint64
+}
+
+// FragStat stores fragmentation insights about a single pool of slabs
+type FragStat struct {
+	ObjSize     uint8
+	ObjsPerSlab uint
+	FragPercent float64
+}
+
+// FragStatsByObjSize returns the fragmentation percent of
+// the requested pool as specified by size
+func (o *ObjectStore) FragStatsByObjSize(size uint8) float64 {
+	var total uint64
+	len := uint64(len(o.slabPools[size].slabs))
+
+	// iterate over all slabs in the pool
+	// store fragment percent in a uint64
+	for _, sl := range o.slabPools[size].slabs {
+		total += uint64(sl.bitSet().Count()) * 100000 / uint64(sl.objsPerSlab())
+	}
+	// average of fragment percent across entire pool
+	total /= len
+
+	// return a percent as a float64
+	return float64(total / 1000)
+}
+
+// FragStatsPerPool returns a slice containing a FragStat for each
+// pool of slabs
+func (o *ObjectStore) FragStatsPerPool() (fragStats []FragStat) {
+	for size, sl := range o.slabPools {
+		fragStats = append(fragStats, FragStat{ObjSize: size, ObjsPerSlab: sl.objsPerSlab, FragPercent: o.FragStatsByObjSize(size)})
+	}
+	return
+}
+
+// FragStatsTotal returns the total fragmentation percent across the object store
+func (o *ObjectStore) FragStatsTotal() float64 {
+	var total uint64
+	var numPools uint64
+	for size := range o.slabPools {
+		numPools++
+		total += uint64(o.FragStatsByObjSize(size) * 100000)
+	}
+	return float64((total / numPools) / 100000)
+}
+
+func (o *ObjectStore) MemStatsByObjSize(size uint8) uint64 {
+
+	return 0
+}
+
+func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
+
+	return
+}
+
+func (o *ObjectStore) MemStatsTotal() uint64 {
+
+	return 0
+}
+
 // ObjectStore contains a map of slabPools indexed by the size of the objects stored in each pool
 // It also contains a lookup table which is a slice of SlabAddr
 // lookupTable is kept sorted in descending order and updated whenever a slab is created or deleted
