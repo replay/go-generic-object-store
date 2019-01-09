@@ -92,12 +92,13 @@ func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
 		return 0, fmt.Errorf("ObjectStore: MemStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	var total uint64
 	len := uint64(len(o.slabPools[size].slabs))
 
 	if len < 1 {
-		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
+		return uint64(sizeOfSlabPool), nil
 	}
+
+	var total uint64
 
 	// iterate over all slabs in the pool and add their memory usage
 	for _, sl := range pool.slabs {
