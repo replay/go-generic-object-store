@@ -119,3 +119,24 @@ func TestAddingAndDeletingLargeNumberOfObjects(t *testing.T) {
 		})
 	})
 }
+
+func BenchmarkAddingDeleting(b *testing.B) {
+	os := NewObjectStore(100)
+
+	testData := make(map[string]ObjAddr)
+	for i := 0; i < 99999; i++ {
+		testData[fmt.Sprintf("%d", i)] = 0
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for n := 0; n < b.N; n++ {
+		for testValue := range testData {
+			testData[testValue], _ = os.Add([]byte(testValue))
+		}
+		for testValue := range testData {
+			os.Delete(testData[testValue])
+		}
+	}
+}
