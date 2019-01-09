@@ -33,12 +33,13 @@ func (o *ObjectStore) FragStatsByObjSize(size uint8) (float32, error) {
 		return 0, fmt.Errorf("ObjectStore: FragStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	var total float32
 	len := float32(len(o.slabPools[size].slabs))
 
 	if len < 1 {
 		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
 	}
+
+	var total float32
 
 	// iterate over all slabs in the pool
 	// get fragmentation percent
