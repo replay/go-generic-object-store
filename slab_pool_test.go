@@ -118,26 +118,6 @@ func TestAddingSearchingObjectInManySlabs(t *testing.T) {
 	})
 }
 
-func TestAddingSearchingObject(t *testing.T) {
-	testValue := "abcde"
-	objSize := uint8(5)
-	objsPerSlab := uint(1)
-	sp := NewSlabPool(objSize, objsPerSlab)
-
-	Convey("When adding and object to the pool", t, func() {
-		objAddr, _, err := sp.add([]byte(testValue))
-		So(err, ShouldBeNil)
-		So(objAddr, ShouldBeGreaterThan, 0)
-
-		Convey("then we should be able to retreive it by searching for the value and getting the id", func() {
-			searchResult, success := sp.search([]byte(testValue))
-			So(success, ShouldBeTrue)
-			returnedValue := sp.get(searchResult)
-			So(returnedValue, ShouldResemble, []byte(testValue))
-		})
-	})
-}
-
 func TestBatchSearchingObjects(t *testing.T) {
 	objSize := uint8(5)
 	objsPerSlab := uint(10)
