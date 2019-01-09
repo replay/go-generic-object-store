@@ -118,33 +118,22 @@ func TestAddingSearchingObjectInManySlabs(t *testing.T) {
 	})
 }
 
-func TestDeletingAddedObjects(t *testing.T) {
+func TestAddingSearchingObject(t *testing.T) {
 	testValue := "abcde"
 	objSize := uint8(5)
 	objsPerSlab := uint(1)
 	sp := NewSlabPool(objSize, objsPerSlab)
 
 	Convey("When adding and object to the pool", t, func() {
-		_, _, err := sp.add([]byte(testValue))
+		objAddr, _, err := sp.add([]byte(testValue))
 		So(err, ShouldBeNil)
+		So(objAddr, ShouldBeGreaterThan, 0)
 
 		Convey("then we should be able to retreive it by searching for the value and getting the id", func() {
 			searchResult, success := sp.search([]byte(testValue))
 			So(success, ShouldBeTrue)
 			returnedValue := sp.get(searchResult)
 			So(returnedValue, ShouldResemble, []byte(testValue))
-			returnedValue = sp.get(searchResult)
-			So(returnedValue, ShouldResemble, []byte(testValue))
-
-			/*Convey("Then we delete that object by id", func() {
-				err = sp.delete(objAddr)
-				So(err, ShouldBeNil)
-
-				Convey("now we we should not be able to retrieve it by searching for the value anymore", func() {
-					_, success := sp.search([]byte(testValue))
-					So(success, ShouldBeFalse)
-				})
-			})*/
 		})
 	})
 }
