@@ -7,70 +7,149 @@ import (
 	"unsafe"
 )
 
+// uint8 + uintptr + []*slab
+var sizeOfSlabPool = 8 + unsafe.Sizeof(uintptr(0)) + unsafe.Sizeof([]*slab{})
+
 // MemStat stores memory usage statistics about a slab pool
 type MemStat struct {
 	ObjSize uint8
 	MemUsed uint64
 }
 
-// FragStat stores fragmentation insights about a single pool of slabs
+// FragStat stores fragmentation insights about a slab pool
 type FragStat struct {
 	ObjSize     uint8
 	ObjsPerSlab uint
-	FragPercent float64
+	FragPercent float32
 }
 
 // FragStatsByObjSize returns the fragmentation percent of
 // the requested pool as specified by size
-func (o *ObjectStore) FragStatsByObjSize(size uint8) float64 {
-	var total uint64
-	len := uint64(len(o.slabPools[size].slabs))
+func (o *ObjectStore) FragStatsByObjSize(size uint8) (float32, error) {
+	// check if pool exists
+	var pool *slabPool
+	var ok bool
+	if pool, ok = o.slabPools[size]; !ok {
+		return 0, fmt.Errorf("ObjectStore: FragStatsByObjSize failed to find pool with object size %d", size)
+	}
+
+	var total float32
+	len := float32(len(o.slabPools[size].slabs))
+
+	if len < 1 {
+		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
+	}
 
 	// iterate over all slabs in the pool
-	// store fragment percent in a uint64
-	for _, sl := range o.slabPools[size].slabs {
-		total += uint64(sl.bitSet().Count()) * 100000 / uint64(sl.objsPerSlab())
+	// get fragmentation percent
+	for _, sl := range pool.slabs {
+		total += float32(sl.bitSet().Count()) / float32(sl.objsPerSlab())
 	}
-	// average of fragment percent across entire pool
-	total /= len
 
-	// return a percent as a float64
-	return float64(total / 1000)
+	return total / len, nil
 }
 
 // FragStatsPerPool returns a slice containing a FragStat for each
-// pool of slabs
+// non-empty slab pool
 func (o *ObjectStore) FragStatsPerPool() (fragStats []FragStat) {
 	for size, sl := range o.slabPools {
-		fragStats = append(fragStats, FragStat{ObjSize: size, ObjsPerSlab: sl.objsPerSlab, FragPercent: o.FragStatsByObjSize(size)})
+		fragPercent, err := o.FragStatsByObjSize(size)
+		if err != nil {
+			continue
+		}
+		fragStats = append(fragStats, FragStat{ObjSize: size, ObjsPerSlab: sl.objsPerSlab, FragPercent: fragPercent})
 	}
 	return
 }
 
 // FragStatsTotal returns the total fragmentation percent across the object store
-func (o *ObjectStore) FragStatsTotal() float64 {
-	var total uint64
-	var numPools uint64
+func (o *ObjectStore) FragStatsTotal() (float32, error) {
+	var total float32
+	var numPools float32
+
 	for size := range o.slabPools {
+		fragPercent, err := o.FragStatsByObjSize(size)
+		if err != nil {
+			continue
+		}
 		numPools++
-		total += uint64(o.FragStatsByObjSize(size) * 100000)
+		total += fragPercent
 	}
-	return float64((total / numPools) / 100000)
+
+	if numPools < 1 {
+		return 0, fmt.Errorf("ObjectStore: No slabs found")
+	}
+
+	return total / numPools, nil
 }
 
-func (o *ObjectStore) MemStatsByObjSize(size uint8) uint64 {
+// MemStatsByObjSize returns the size of a slab pool in bytes
+func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
+	// check if pool exists
+	var pool *slabPool
+	var ok bool
+	if pool, ok = o.slabPools[size]; !ok {
+		return 0, fmt.Errorf("ObjectStore: MemStatsByObjSize failed to find pool with object size %d", size)
+	}
 
-	return 0
+	var total uint64
+	len := uint64(len(o.slabPools[size].slabs))
+
+	if len < 1 {
+		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
+	}
+
+	// iterate over all slabs in the pool and add their memory usage
+	for _, sl := range pool.slabs {
+		total += uint64(sl.getTotalLength())
+	}
+
+	// add overhead of the slab pool
+	total += uint64(sizeOfSlabPool)
+
+	// add overhead for each slab in the slice
+	total += uint64(unsafe.Sizeof(uintptr(0))) * len
+
+	return total, nil
 }
 
+// MemStatsPerPool returns a slice containing a MemStat for each
+// non-empty slab pool
 func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
-
+	for size := range o.slabPools {
+		memUsed, err := o.MemStatsByObjSize(size)
+		if err != nil {
+			continue
+		}
+		memStats = append(memStats, MemStat{ObjSize: size, MemUsed: memUsed})
+	}
 	return
 }
 
-func (o *ObjectStore) MemStatsTotal() uint64 {
+// MemStatsTotal returns the estimated total memory used across the object store
+func (o *ObjectStore) MemStatsTotal() (uint64, error) {
+	var total uint64
+	var numPools uint64
 
-	return 0
+	for size := range o.slabPools {
+		memUsed, err := o.MemStatsByObjSize(size)
+		if err != nil {
+			continue
+		}
+		numPools++
+		total += memUsed
+	}
+
+	// add overhead of lookupTable
+	total += uint64(unsafe.Sizeof([]SlabAddr{}))
+	// add overhead of objsPerSlab
+	total += uint64(unsafe.Sizeof(uint(0)))
+	// add overhead of pointers in slabPools
+	total += uint64(unsafe.Sizeof(uintptr(0))) * numPools
+
+	//TODO: add estimated size of the map
+
+	return total, nil
 }
 
 // ObjectStore contains a map of slabPools indexed by the size of the objects stored in each pool
