@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"unsafe"
+
+	"github.com/willf/bitset"
 )
 
 // slabPool is a struct that contains and manages multiple slabs of data
@@ -17,6 +19,7 @@ type slabPool struct {
 	slabs       []*slab
 	objSize     uint8
 	objsPerSlab uint
+	freeSlabs   *bitset.BitSet
 }
 
 // NewSlabPool initializes a new slab pool and returns a pointer to it
@@ -24,6 +27,7 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	return &slabPool{
 		objSize:     objSize,
 		objsPerSlab: objsPerSlab,
+		freeSlabs:   bitset.New(0),
 	}
 }
 
@@ -36,15 +40,20 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 // If no new slab has been created, then the second value is 0
 // The third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
-	var success bool
+	var success, full bool
 	var objAddr ObjAddr
 	var currentSlab *slab
+	var idx int
 
 	// find a slab where the addObj call succeeds
 	// on full slabs the returned success value is false
-	for _, currentSlab = range s.slabs {
-		objAddr, success = currentSlab.addObj(obj)
+	for idx, currentSlab = range s.slabs {
+		objAddr, full, success = currentSlab.addObj(obj)
 		if success {
+			if full {
+				// mark that slab as being full
+				s.freeSlabs.Set(uint(idx))
+			}
 			// the object has been added
 			return objAddr, 0, nil
 		}
@@ -52,21 +61,44 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 
 	// the previous loop has not found a slab with free space,
 	// so we add a new one
-	var err error
-	currentSlab, err = s.addSlab()
+	slabIdx, err := s.addSlab()
 	if err != nil {
 		return 0, 0, err
 	}
 
+	currentSlab = s.slabs[slabIdx]
+
 	// add the object to the new slab
-	objAddr, success = currentSlab.addObj(obj)
+	objAddr, full, success = currentSlab.addObj(obj)
 	if !success {
 		return 0, 0, fmt.Errorf("Add: Failed adding object to new slab")
+	}
+
+	if full {
+		// mark that slab as being full
+		s.freeSlabs.Set(uint(slabIdx))
 	}
 
 	// a new slab has been created, so its address is returned as
 	// the second return value
 	return objAddr, currentSlab.addr(), nil
+}
+
+// delete takes an ObjAddr and a SlabAddr, it will delete the according
+// object from the slab at the given address and update all the related
+// properties.
+// On error it returns an error, otherwise nil
+func (s *slabPool) delete(obj ObjAddr, slabAddr SlabAddr) error {
+	empty := slabFromSlabAddr(slabAddr).delete(obj)
+
+	if empty {
+		return s.deleteSlab(slabAddr)
+	} else {
+		slabIdx := s.findSlabByAddr(slabAddr)
+		s.freeSlabs.Clear(uint(slabIdx))
+	}
+
+	return nil
 }
 
 // findSlabByObjAddr takes an object address or slab address and then
@@ -80,12 +112,12 @@ func (s *slabPool) findSlabByAddr(obj uintptr) int {
 }
 
 // addSlab adds another slab to the pool and initalizes the related structs
-// on success the first returned value is a pointer to the new slab
+// on success the first returned value is the index of the new slab
 // on failure the second returned value is the error message
-func (s *slabPool) addSlab() (*slab, error) {
+func (s *slabPool) addSlab() (int, error) {
 	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	newSlabAddr := addedSlab.addr()
@@ -97,7 +129,38 @@ func (s *slabPool) addSlab() (*slab, error) {
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
 	s.slabs[insertAt] = addedSlab
 
-	return addedSlab, nil
+	return insertAt, nil
+}
+
+// deleteSlab deletes the slab at the given slab index
+// on success it returns nil, otherwise it returns an error
+func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
+	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
+
+	currentSlab := s.slabs[slabIdx]
+
+	// delete slab id from slab slice
+	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
+	s.slabs[len(s.slabs)-1] = &slab{}
+	s.slabs = s.slabs[:len(s.slabs)-1]
+
+	totalLen := int(currentSlab.getTotalLength())
+
+	// unmap the slab's memory
+	// to do so we need to built a byte slice that refers to the whole
+	// slab as its underlying memory area
+	var toDelete []byte
+	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&toDelete))
+	sliceHeader.Data = uintptr(unsafe.Pointer(currentSlab))
+	sliceHeader.Len = totalLen
+	sliceHeader.Cap = sliceHeader.Len
+
+	err := syscall.Munmap(toDelete)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // search searches for a byte slice with the length of
@@ -213,35 +276,4 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 // get returns an object of the given object address as a byte slice
 func (s *slabPool) get(obj ObjAddr) []byte {
 	return objFromObjAddr(obj, s.objSize)
-}
-
-// deleteSlab deletes the slab at the given slab index
-// on success it returns nil, otherwise it returns an error
-func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
-	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
-
-	currentSlab := s.slabs[slabIdx]
-
-	// delete slab id from slab slice
-	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
-	s.slabs[len(s.slabs)-1] = &slab{}
-	s.slabs = s.slabs[:len(s.slabs)-1]
-
-	totalLen := int(currentSlab.getTotalLength())
-
-	// unmap the slab's memory
-	// to do so we need to built a byte slice that refers to the whole
-	// slab as its underlying memory area
-	var toDelete []byte
-	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&toDelete))
-	sliceHeader.Data = uintptr(unsafe.Pointer(currentSlab))
-	sliceHeader.Len = totalLen
-	sliceHeader.Cap = sliceHeader.Len
-
-	err := syscall.Munmap(toDelete)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

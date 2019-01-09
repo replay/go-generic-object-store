@@ -121,14 +121,15 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // addObj takes an object and adds it to this slice if there is
 // free space for it
 // On success the first return value is the ObjAddr of the newly
-// added object and the second value is true
-// On failure the second return value is false
-func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
+// added object, the second value is a bool that indicates if
+// the slab is full now, the third value indicates success
+// On failure the third return value is false, otherwise it's true
+func (s *slab) addObj(obj []byte) (ObjAddr, bool, bool) {
 	bitSet := s.bitSet()
 	idx, success := bitSet.NextClear(0)
 	if !success {
 		// there is no free space for another object
-		return 0, false
+		return 0, false, false
 	}
 
 	offset := s.getObjOffset(idx)
@@ -155,9 +156,9 @@ func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
 	}
 
 	// set the according object slot as used
-	s.bitSet().Set(idx)
+	bitSet.Set(idx)
 
-	return objAddr, true
+	return objAddr, bitSet.All(), true
 }
 
 // delete deletes the object at the given object address
