@@ -2,6 +2,7 @@ package gos
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -154,4 +155,111 @@ func TestBatchSearchingObjects(t *testing.T) {
 			So(string(objFromObjAddr(searchResults[7], 5)), ShouldEqual, string(searchTerms[7]))
 		})
 	})
+}
+
+func TestBitSetInsertIntoMaxUint64(t *testing.T) {
+	type testCase struct {
+		input     []string
+		insertIdx uint
+		length    uint
+		expected  []string
+	}
+
+	testCases := []testCase{
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			insertIdx: uint(62),
+			length:    64,
+			expected: []string{
+				"1111111111111111111111111111111111111111111111111111111111111101",
+				"1000000000000000000000000000000000000000000000000000000000000000",
+			},
+		},
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			insertIdx: uint(63),
+			length:    64,
+			expected: []string{
+				"1111111111111111111111111111111111111111111111111111111111111110",
+				"1000000000000000000000000000000000000000000000000000000000000000",
+			},
+		},
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			insertIdx: uint(0),
+			length:    64,
+			expected: []string{
+				"0111111111111111111111111111111111111111111111111111111111111111",
+				"1000000000000000000000000000000000000000000000000000000000000000",
+			},
+		},
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111111111",
+			},
+			insertIdx: uint(70),
+			length:    64 * 3,
+			expected: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111110111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1000000000000000000000000000000000000000000000000000000000000000",
+			},
+		},
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111110000",
+			},
+			insertIdx: uint(70),
+			length:    64*3 - 4,
+			expected: []string{
+				"1111111111111111111111111111111111111111111111111111111111111111",
+				"1111110111111111111111111111111111111111111111111111111111111111",
+				"1111111111111111111111111111111111111111111111111111111111111000",
+			},
+		},
+		{
+			input: []string{
+				"1111111111111111111111111111111111111111111111111111111111110000",
+			},
+			insertIdx: uint(10),
+			length:    60,
+			expected: []string{
+				"1111111111011111111111111111111111111111111111111111111111111000",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		var input []uint64
+		for _, inputElement := range tc.input {
+			parsed, _ := strconv.ParseUint(inputElement, 2, 64)
+			input = append(input, parsed)
+		}
+
+		var expected []uint64
+		for _, expectedElement := range tc.expected {
+			parsed, _ := strconv.ParseUint(expectedElement, 2, 64)
+			expected = append(expected, parsed)
+		}
+
+		Convey("When inserting into uint64 slice we should get a slice with the expected values back", t, func() {
+			result := bitSetInsert(input, tc.length, tc.insertIdx)
+			So(len(result), ShouldEqual, len(expected))
+			for i := range result {
+				So(fmt.Sprintf("%b", result[i]), ShouldEqual, fmt.Sprintf("%b", expected[i]))
+				So(result[i], ShouldEqual, expected[i])
+			}
+		})
+	}
 }

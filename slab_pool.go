@@ -128,8 +128,55 @@ func (s *slabPool) addSlab() (int, error) {
 	s.slabs = append(s.slabs, &slab{})
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
 	s.slabs[insertAt] = addedSlab
+	s.addSlabIntoBitSet(uint(insertAt))
 
 	return insertAt, nil
+}
+
+// addSlabIntoBitSet takes an index where a new slab has been added and then modifies
+// the bitset's data accordingly to reflect that change
+func (s *slabPool) addSlabIntoBitSet(idx uint) {
+	s.freeSlabs = bitset.From(bitSetInsert(s.freeSlabs.Bytes(), s.freeSlabs.Len(), idx))
+
+}
+
+// bitSetInsert takes a slice of uint64, a setLength which indicates how many bits of
+// the slice's data are used, and an index which indicates where a bit should be
+// inserted. Then it shifts all the bits in the uint64 slice to the right by 1, starting
+// from the given index position, and sets the index position to 0.
+// f.e. 111 with insert index 2 would become 1101
+func bitSetInsert(b []uint64, setLength, idx uint) []uint64 {
+	insertAtElement := idx / 64
+
+	// if length of BitSet is a multiple of uint64 we need to allocate more space first
+	if setLength%64 == 0 {
+		b = append(b, uint64(0))
+	}
+
+	var i uint
+	for i = uint(len(b) - 1); i > insertAtElement; i-- {
+		// all elements above the position where we want to insert can simply by shifted
+		b[i] >>= 1
+
+		// then we take the last bit of the previous element and set it as
+		// the first bit of the current element
+		b[i] |= (b[i-1] & 1) << 63
+	}
+
+	// generate a mask to extract the data that we need to shift right
+	// within the element where we insert a bit
+	dataMask := uint64(1)<<(uint64(64)-uint64(idx)%64) - 1
+
+	// extract that data that we'll shift
+	data := b[i] & dataMask
+
+	// set the positions of the data mask to 0 in the element where we insert
+	b[i] &= ^dataMask
+
+	// shift data mask to the right and insert its data to the slice element
+	b[i] |= data >> 1
+
+	return b
 }
 
 // deleteSlab deletes the slab at the given slab index
