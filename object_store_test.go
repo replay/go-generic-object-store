@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"crypto/md5"
 	"fmt"
 	"strconv"
 	"testing"
@@ -147,7 +148,7 @@ func BenchmarkSearchingForValue(b *testing.B) {
 	os := NewObjectStore(100)
 
 	for i := 0; i < testValueCount; i++ {
-		testValues[i] = []byte(fmt.Sprintf("%d", i))
+		testValues[i] = []byte(fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%d", i)))))
 		os.Add(testValues[i])
 	}
 
