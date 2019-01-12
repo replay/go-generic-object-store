@@ -19,7 +19,7 @@ type slabPool struct {
 	slabs       []*slab
 	objSize     uint8
 	objsPerSlab uint
-	freeSlabs   *bitset.BitSet
+	freeSlabs   bitset.BitSet
 }
 
 // NewSlabPool initializes a new slab pool and returns a pointer to it
@@ -27,7 +27,7 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	return &slabPool{
 		objSize:     objSize,
 		objsPerSlab: objsPerSlab,
-		freeSlabs:   bitset.New(0),
+		freeSlabs:   *bitset.New(0),
 	}
 }
 
