@@ -142,5 +142,22 @@ func BenchmarkAddingDeleting(b *testing.B) {
 }
 
 func BenchmarkSearchingForValue(b *testing.B) {
+	testValueCount := 1000000
+	testValues := make([][]byte, testValueCount)
+	os := NewObjectStore(100)
 
+	for i := 0; i < testValueCount; i++ {
+		testValues[i] = []byte(fmt.Sprintf("%d", i))
+		os.Add(testValues[i])
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for n := 0; n < b.N; n++ {
+		_, found := os.Search(testValues[n%testValueCount])
+		if !found {
+			b.Errorf("Value %d has not been found, but should have", n)
+		}
+	}
 }
