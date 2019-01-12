@@ -140,3 +140,7 @@ func BenchmarkAddingDeleting(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkSearchingForValue(b *testing.B) {
+
+}
