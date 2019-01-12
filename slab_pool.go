@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"encoding/binary"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	jump "github.com/dgryski/go-jump"
 	"github.com/willf/bitset"
 )
 
@@ -31,6 +33,19 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	}
 }
 
+func (s *slabPool) getNextSlabID(current, objHash uint) uint {
+	slabCount := uint(len(s.slabs))
+	var next uint
+
+	objHash++
+	next = current + objHash
+	if next >= slabCount {
+		next = (next - 1) % objHash
+	}
+
+	return next
+}
+
 // add adds an object to the pool
 // It will try to find a slab that has a free object slot to avoid
 // unnecessary allocations. If it can't find a free slot, it will add a
@@ -40,26 +55,72 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 // If no new slab has been created, then the second value is 0
 // The third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
-	var newSlab SlabAddr
 	var currentSlab *slab
+	var objHash uint
+	var hashInput []byte
 
-	// find a slab where the addObj call succeeds
-	// on full slabs the returned success value is false
-
-	idx, found := s.freeSlabs.NextClear(0)
-	if found {
-		currentSlab = s.slabs[idx]
+	if len(obj) < 8 {
+		hashInput = append(make([]byte, 8-len(obj)), obj...)
 	} else {
+		hashInput = obj[len(obj)-8:]
+	}
+
+	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)))
+
+	var objIdx uint
+	found := false
+	if len(s.slabs) == 0 {
+		objIdx = objHash
+	} else {
+		slabOffsets := objHash
+		slabLen := uint(len(s.slabs))
+		for slabOffsets >= slabLen {
+			slabOffsets = slabOffsets / 10
+		}
+		if slabOffsets == 0 {
+			slabOffsets = 1
+		}
+
+		slabID := slabOffsets
+		for {
+			if !s.freeSlabs.Test(slabID) {
+				slabBitSet := s.slabs[slabID].bitSet()
+				objIdx, found = slabBitSet.NextClear(objHash)
+				if !found {
+					objIdx, found = slabBitSet.NextClear(0)
+				}
+
+				if found {
+					currentSlab = s.slabs[slabID]
+					break
+				}
+			}
+
+			slabID = slabID + slabOffsets
+			if slabID >= slabLen {
+				slabID = slabID%slabOffsets + 1
+			}
+
+			// we looped over all slabIDs
+			if slabID == slabOffsets {
+				break
+			}
+
+		}
+	}
+
+	var newSlab SlabAddr
+	if !found {
 		newIdx, err := s.addSlab()
 		if err != nil {
 			return 0, 0, err
 		}
 		currentSlab = s.slabs[newIdx]
-		idx = uint(newIdx)
 		newSlab = SlabAddr(unsafe.Pointer(currentSlab))
+		objIdx = objHash
 	}
 
-	objAddr, full, success := currentSlab.addObj(obj)
+	objAddr, full, success := currentSlab.addObj(obj, objIdx)
 	if !success {
 		// this shouldn't happen, because we first checked via freeSlabs
 		// whether this slab has space or not
@@ -67,7 +128,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	}
 	if full {
 		// mark that slab as full so nothing more gets added
-		s.freeSlabs.Set(uint(idx))
+		s.freeSlabs.Set(uint(objIdx))
 	}
 
 	return objAddr, newSlab, nil

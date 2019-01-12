@@ -42,6 +42,53 @@ func TestAddingDeletingSlabs(t *testing.T) {
 		})
 	})
 }
+
+func TestGettingNextSlabIdForSearch(t *testing.T) {
+	type testCase struct {
+		expectedIDs []uint
+		slabCount   int
+		objHash     uint
+	}
+
+	testCases := []testCase{
+		testCase{
+			expectedIDs: []uint{4, 8, 3, 7, 2, 6, 1, 5, 9, 0},
+			slabCount:   10,
+			objHash:     3,
+		},
+		testCase{
+			expectedIDs: []uint{1, 2, 0},
+			slabCount:   3,
+			objHash:     0,
+		},
+		testCase{
+			expectedIDs: []uint{0},
+			slabCount:   1,
+			objHash:     0,
+		},
+		testCase{
+			expectedIDs: []uint{12, 11, 10, 9, 8, 7, 19, 6, 18, 5, 17, 4, 16, 3, 15, 2, 14, 1, 13, 0},
+			slabCount:   20,
+			objHash:     11,
+		},
+	}
+
+	for tcIdx, tc := range testCases {
+		sp := NewSlabPool(10, 10)
+		for i := 0; i < tc.slabCount; i++ {
+			sp.addSlab()
+		}
+
+		current := (tc.objHash + 1) % uint(tc.slabCount)
+		for i := 0; i < tc.slabCount; i++ {
+			if current != tc.expectedIDs[i] {
+				t.Fatalf("tc %d: Expected ID to be %d but it was %d", tcIdx, tc.expectedIDs[i], current)
+			}
+			current = sp.getNextSlabID(current, tc.objHash)
+		}
+	}
+}
+
 func TestAddingGettingManyObjects(t *testing.T) {
 	objSize := uint8(10)
 	objsPerSlab := uint(10)
