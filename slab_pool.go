@@ -3,6 +3,7 @@ package gos
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -106,27 +107,32 @@ func (s *slabPool) addSlab() (*slab, error) {
 func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	wg := sync.WaitGroup{}
 	objSize := int(s.objSize)
-
 	var result uintptr
 
-	wg.Add(len(s.slabs))
-	for _, currentSlab := range s.slabs {
-		go func(currentSlab *slab) {
+	goMaxProcs := runtime.GOMAXPROCS(0)
+	wg.Add(goMaxProcs)
+	for i := 0; i < goMaxProcs; i++ {
+		go func(routineID int) {
 			defer wg.Done()
 
-		OBJECT:
-			for i := uint(0); i < s.objsPerSlab; i++ {
-				if currentSlab.bitSet().Test(i) {
-					obj := currentSlab.getObjByIdx(i)
-					for j := 0; j < objSize; j++ {
-						if obj[j] != searching[j] {
-							continue OBJECT
-						}
-					}
+			for slabID := routineID; slabID < len(s.slabs); slabID += goMaxProcs {
+				currentSlab := s.slabs[slabID]
 
-					// found it, store the result atomically
-					atomic.StoreUintptr(&result, objAddrFromObj(obj))
-					return
+			OBJECT:
+				for objID := uint(0); objID < s.objsPerSlab; objID++ {
+
+					if currentSlab.bitSet().Test(objID) {
+						obj := currentSlab.getObjByIdx(objID)
+						for j := 0; j < objSize; j++ {
+							if obj[j] != searching[j] {
+								continue OBJECT
+							}
+						}
+
+						// found it, store the result atomically
+						atomic.StoreUintptr(&result, objAddrFromObj(obj))
+						return
+					}
 				}
 
 				// if result has been found by another thread we can exit this thread
@@ -134,7 +140,7 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 					return
 				}
 			}
-		}(currentSlab)
+		}(i)
 	}
 
 	wg.Wait()
