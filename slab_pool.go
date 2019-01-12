@@ -40,8 +40,6 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 // If no new slab has been created, then the second value is 0
 // The third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
-	var success, full bool
-	var objAddr ObjAddr
 	var newSlab SlabAddr
 	var currentSlab *slab
 
@@ -49,7 +47,9 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	// on full slabs the returned success value is false
 
 	idx, found := s.freeSlabs.NextClear(0)
-	if !found {
+	if found {
+		currentSlab = s.slabs[idx]
+	} else {
 		newIdx, err := s.addSlab()
 		if err != nil {
 			return 0, 0, err
@@ -57,18 +57,16 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 		currentSlab = s.slabs[newIdx]
 		idx = uint(newIdx)
 		newSlab = SlabAddr(unsafe.Pointer(currentSlab))
-	} else {
-		currentSlab = s.slabs[idx]
 	}
 
-	objAddr, full, success = currentSlab.addObj(obj)
+	objAddr, full, success := currentSlab.addObj(obj)
 	if !success {
 		// this shouldn't happen, because we first checked via freeSlabs
 		// whether this slab has space or not
 		return 0, 0, fmt.Errorf("Add: Failed to add object into slab")
 	}
 	if full {
-		// mark that slab as being full so nothing more gets added
+		// mark that slab as full so nothing more gets added
 		s.freeSlabs.Set(uint(idx))
 	}
 
