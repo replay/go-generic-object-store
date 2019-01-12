@@ -133,11 +133,11 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 						atomic.StoreUintptr(&result, objAddrFromObj(obj))
 						return
 					}
+				}
 
-					// if result has been found by another thread we can exit this thread
-					if atomic.LoadUintptr(&result) > 0 {
-						return
-					}
+				// if result has been found by another thread we can exit this thread
+				if atomic.LoadUintptr(&result) > 0 {
+					return
 				}
 			}
 		}(i)
