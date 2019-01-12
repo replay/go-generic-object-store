@@ -42,46 +42,37 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var success, full bool
 	var objAddr ObjAddr
+	var newSlab SlabAddr
 	var currentSlab *slab
-	var idx int
 
 	// find a slab where the addObj call succeeds
 	// on full slabs the returned success value is false
-	for idx, currentSlab = range s.slabs {
-		objAddr, full, success = currentSlab.addObj(obj)
-		if success {
-			if full {
-				// mark that slab as being full
-				s.freeSlabs.Set(uint(idx))
-			}
-			// the object has been added
-			return objAddr, 0, nil
+
+	idx, found := s.freeSlabs.NextClear(0)
+	if !found {
+		newIdx, err := s.addSlab()
+		if err != nil {
+			return 0, 0, err
 		}
+		currentSlab = s.slabs[newIdx]
+		idx = uint(newIdx)
+		newSlab = SlabAddr(unsafe.Pointer(currentSlab))
+	} else {
+		currentSlab = s.slabs[idx]
 	}
 
-	// the previous loop has not found a slab with free space,
-	// so we add a new one
-	slabIdx, err := s.addSlab()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	currentSlab = s.slabs[slabIdx]
-
-	// add the object to the new slab
 	objAddr, full, success = currentSlab.addObj(obj)
 	if !success {
-		return 0, 0, fmt.Errorf("Add: Failed adding object to new slab")
+		// this shouldn't happen, because we first checked via freeSlabs
+		// whether this slab has space or not
+		return 0, 0, fmt.Errorf("Add: Failed to add object into slab")
 	}
-
 	if full {
-		// mark that slab as being full
-		s.freeSlabs.Set(uint(slabIdx))
+		// mark that slab as being full so nothing more gets added
+		s.freeSlabs.Set(uint(idx))
 	}
 
-	// a new slab has been created, so its address is returned as
-	// the second return value
-	return objAddr, currentSlab.addr(), nil
+	return objAddr, newSlab, nil
 }
 
 // delete takes an ObjAddr and a SlabAddr, it will delete the according
@@ -94,6 +85,9 @@ func (s *slabPool) delete(obj ObjAddr, slabAddr SlabAddr) error {
 	if empty {
 		return s.deleteSlab(slabAddr)
 	} else {
+		// the slab isn't empty, but since we've just deleted an object
+		// we know that there is at least one free slot, so we mark it
+		// accordingly
 		slabIdx := s.findSlabByAddr(slabAddr)
 		s.freeSlabs.Clear(uint(slabIdx))
 	}
@@ -128,55 +122,10 @@ func (s *slabPool) addSlab() (int, error) {
 	s.slabs = append(s.slabs, &slab{})
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
 	s.slabs[insertAt] = addedSlab
-	s.addSlabIntoBitSet(uint(insertAt))
+
+	s.freeSlabs.InsertAt(uint(insertAt))
 
 	return insertAt, nil
-}
-
-// addSlabIntoBitSet takes an index where a new slab has been added and then modifies
-// the bitset's data accordingly to reflect that change
-func (s *slabPool) addSlabIntoBitSet(idx uint) {
-	s.freeSlabs = bitset.From(bitSetInsert(s.freeSlabs.Bytes(), s.freeSlabs.Len(), idx))
-
-}
-
-// bitSetInsert takes a slice of uint64, a setLength which indicates how many bits of
-// the slice's data are used, and an index which indicates where a bit should be
-// inserted. Then it shifts all the bits in the uint64 slice to the right by 1, starting
-// from the given index position, and sets the index position to 0.
-// f.e. 111 with insert index 2 would become 1101
-func bitSetInsert(b []uint64, setLength, idx uint) []uint64 {
-	insertAtElement := idx / 64
-
-	// if length of BitSet is a multiple of uint64 we need to allocate more space first
-	if setLength%64 == 0 {
-		b = append(b, uint64(0))
-	}
-
-	var i uint
-	for i = uint(len(b) - 1); i > insertAtElement; i-- {
-		// all elements above the position where we want to insert can simply by shifted
-		b[i] >>= 1
-
-		// then we take the last bit of the previous element and set it as
-		// the first bit of the current element
-		b[i] |= (b[i-1] & 1) << 63
-	}
-
-	// generate a mask to extract the data that we need to shift right
-	// within the element where we insert a bit
-	dataMask := uint64(1)<<(uint64(64)-uint64(idx)%64) - 1
-
-	// extract that data that we'll shift
-	data := b[i] & dataMask
-
-	// set the positions of the data mask to 0 in the element where we insert
-	b[i] &= ^dataMask
-
-	// shift data mask to the right and insert its data to the slice element
-	b[i] |= data >> 1
-
-	return b
 }
 
 // deleteSlab deletes the slab at the given slab index
@@ -206,6 +155,8 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
 	if err != nil {
 		return err
 	}
+
+	s.freeSlabs.DeleteAt(uint(slabIdx))
 
 	return nil
 }

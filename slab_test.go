@@ -73,7 +73,11 @@ func TestSettingGettingManyObjects(t *testing.T) {
 			for i := uint(0); i < objsPerSlab; i++ {
 				value := fmt.Sprintf("%05d", i)
 				objAddr, full, success := slab.addObj([]byte(value))
-				So(full, ShouldBeFalse)
+				if i == objsPerSlab-1 {
+					So(full, ShouldBeTrue)
+				} else {
+					So(full, ShouldBeFalse)
+				}
 				So(success, ShouldBeTrue)
 				objAddresses = append(objAddresses, objAddr)
 			}
