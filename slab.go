@@ -152,7 +152,7 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // the slab is full now, the third value indicates success
 // On failure the third return value is false, otherwise it's true
 func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
-	offset := s.getObjOffset(idx)
+	offset := s.getObjOffset(idx) // 71
 
 	// objAddr is used as the unique identifier of the newly created object
 	objAddr := uintptr(unsafe.Pointer(s)) + offset
@@ -163,7 +163,7 @@ func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 	var i uintptr
 	if len > 8 {
 		// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
-		for ; i < len; i = i + 8 {
+		for ; i+8 < len; i = i + 8 {
 			*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
 		}
 	}
@@ -171,8 +171,7 @@ func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 	// if the length is not divisible by 8 we need to copy the left over data
 	remainder := len % 8
 	if remainder != 0 {
-		*((*uint64)(unsafe.Pointer(objAddr + i))) <<= (remainder * 8)
-		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (math.MaxUint64 >> ((8 - len) * 8)))
+		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (math.MaxUint64 >> ((8 - remainder) * 8)))
 	}
 
 	// set the according object slot as used
