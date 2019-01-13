@@ -152,7 +152,7 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // the slab is full now, the third value indicates success
 // On failure the third return value is false, otherwise it's true
 func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
-	offset := s.getObjOffset(idx) // 71
+	offset := s.getObjOffset(idx)
 
 	// objAddr is used as the unique identifier of the newly created object
 	objAddr := uintptr(unsafe.Pointer(s)) + offset
