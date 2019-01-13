@@ -89,16 +89,40 @@ func TestGettingNextSlabIdForSearch(t *testing.T) {
 	}
 }
 
-func TestAddingGettingManyObjects(t *testing.T) {
-	objSize := uint8(10)
-	objsPerSlab := uint(10)
+func TestAddingGettingManyObjects8(t *testing.T) {
+	testAddingGettingManyObjects(t, 8, 10)
+}
+
+func TestAddingGettingManyObjects10(t *testing.T) {
+	testAddingGettingManyObjects(t, 10, 10)
+}
+
+func TestAddingGettingManyObjects13(t *testing.T) {
+	testAddingGettingManyObjects(t, 13, 10)
+}
+
+func TestAddingGettingManyObjects15(t *testing.T) {
+	testAddingGettingManyObjects(t, 15, 10)
+}
+
+func TestAddingGettingManyObjects16(t *testing.T) {
+	testAddingGettingManyObjects(t, 16, 10)
+}
+
+func TestAddingGettingManyObjects17(t *testing.T) {
+	testAddingGettingManyObjects(t, 17, 10)
+}
+
+func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
+	objSize := uint8(objSz)
+	objsPerSlab := uint(objsPer)
 	sp := NewSlabPool(objSize, objsPerSlab)
 	objects := make(map[string]ObjAddr)
 
 	Convey("When generating a set of many test objects", t, func() {
 		var err error
 		// generate twice as many test object as there are objects per slab and add them to slabPool
-		for i := 0; i < 12; i++ {
+		for i := 0; i < int(objsPerSlab*2); i++ {
 			fmt.Println(fmt.Sprintf("adding object %d", i))
 			for i := 0; i < len(sp.slabs); i++ {
 				fmt.Println(sp.slabs[i].String())
@@ -116,9 +140,9 @@ func TestAddingGettingManyObjects(t *testing.T) {
 			for value, obj := range objects {
 				returned = sp.get(obj)
 				fmt.Println(fmt.Sprintf("looking for %s at %d, got %s", value, int(obj), string(returned)))
-				//So(string(returned), ShouldEqual, value)
+				// So(string(returned), ShouldEqual, value)
 			}
-			//	So(len(sp.slabs), ShouldEqual, 2)
+			// So(len(sp.slabs), ShouldEqual, 2)
 		})
 	})
 }
