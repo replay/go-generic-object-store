@@ -35,12 +35,34 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 
 func (s *slabPool) getNextSlabID(current, objHash uint) uint {
 	slabCount := uint(len(s.slabs))
+	if objHash >= slabCount {
+		return (current + 1) % slabCount
+	}
+	return s.getNextID(current, objHash, slabCount)
+}
+
+// getNextID generates the next ID to check foraccording to given parameters
+// those IDs are used to find slabs in slices and objects in slabs
+// current is the last used ID
+// objHash is a hash of the object we find an ID for, it must be > 0 and < max
+// max is the max value that we can accept as ID, exclusive
+func (s *slabPool) getNextID(current, objHash, max uint) uint {
 	var next uint
 
+	if objHash > max {
+		objHash = objHash % max
+	}
+
 	objHash++
+
 	next = current + objHash
-	if next >= slabCount {
-		next = next % slabCount
+	if next >= max {
+		next = next % objHash
+		if next == 0 {
+			next = objHash - 1
+		} else {
+			next--
+		}
 	}
 
 	return next
@@ -65,16 +87,17 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 		hashInput = obj[len(obj)-8:]
 	}
 
-	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)))
-
 	slabCount := uint(len(s.slabs))
+	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
+	objHash++ // objHash must be >0
+
 	objIdx := objHash
 
 	found := false
 	var slabIdx uint
 	if slabCount > 0 {
-		slabIdx = objHash % slabCount
 		for i := uint(0); i < slabCount; i++ {
+			slabIdx = s.getNextSlabID(slabIdx, objHash)
 			if !s.freeSlabs.Test(slabIdx) {
 				slabBitSet := s.slabs[slabIdx].bitSet()
 				objIdx, found = slabBitSet.NextClear(objIdx)
@@ -86,9 +109,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 					currentSlab = s.slabs[slabIdx]
 					break
 				}
-
 			}
-			slabIdx = s.getNextSlabID(slabIdx, objHash)
 		}
 	}
 

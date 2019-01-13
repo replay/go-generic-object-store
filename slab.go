@@ -149,7 +149,7 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // free space for it
 // On success the first return value is the ObjAddr of the newly
 // added object, the second value is a bool that indicates if
-// the slab is full now, the third value indicates success
+// the slab is full, the third value indicates success
 // On failure the third return value is false, otherwise it's true
 func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 	offset := s.getObjOffset(idx)
@@ -161,11 +161,9 @@ func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 	src := (*reflect.SliceHeader)(unsafe.Pointer(&obj)).Data
 
 	var i uintptr
-	if len > 8 {
-		// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
-		for ; i+8 < len; i = i + 8 {
-			*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
-		}
+	// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
+	for ; i+8 <= len; i = i + 8 {
+		*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
 	}
 
 	// if the length is not divisible by 8 we need to copy the left over data
@@ -176,10 +174,7 @@ func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 
 	// set the according object slot as used
 	bitSet := s.bitSet()
-	fmt.Println(fmt.Sprintf("setting bit set idx %d", idx))
 	bitSet.Set(idx)
-
-	fmt.Println(fmt.Sprintf("value %s is set at %d", string(s.getObjByIdx(idx)), int(objAddr)))
 
 	return objAddr, bitSet.All(), true
 }

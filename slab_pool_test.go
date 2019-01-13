@@ -3,6 +3,7 @@ package gos
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -43,48 +44,70 @@ func TestAddingDeletingSlabs(t *testing.T) {
 	})
 }
 
-func TestGettingNextSlabIdForSearch(t *testing.T) {
+func TestGettingNextIdForSearch(t *testing.T) {
 	type testCase struct {
 		expectedIDs []uint
-		slabCount   int
+		max         uint
 		objHash     uint
 	}
 
 	testCases := []testCase{
 		testCase{
-			expectedIDs: []uint{4, 8, 3, 7, 2, 6, 1, 5, 9, 0},
-			slabCount:   10,
+			expectedIDs: []uint{1, 0, 1, 0, 1},
+			max:         1,
+			objHash:     1,
+		},
+		testCase{
+			expectedIDs: []uint{7, 2, 6, 1, 5, 9, 0, 4, 8, 3, 7, 2},
+			max:         10,
 			objHash:     3,
 		},
 		testCase{
-			expectedIDs: []uint{1, 2, 0},
-			slabCount:   3,
+			expectedIDs: []uint{1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2},
+			max:         10,
 			objHash:     0,
 		},
 		testCase{
-			expectedIDs: []uint{0},
-			slabCount:   1,
-			objHash:     0,
+			expectedIDs: []uint{0, 1, 0, 1, 0, 1, 0},
+			max:         2,
+			objHash:     1,
 		},
 		testCase{
-			expectedIDs: []uint{12, 11, 10, 9, 8, 7, 19, 6, 18, 5, 17, 4, 16, 3, 15, 2, 14, 1, 13, 0},
-			slabCount:   20,
-			objHash:     11,
+			expectedIDs: []uint{1, 0, 1, 0, 1},
+			max:         2,
+			objHash:     10,
+		},
+		testCase{
+			expectedIDs: []uint{0, 1, 0, 1, 0},
+			max:         2,
+			objHash:     5,
+		},
+		testCase{
+			expectedIDs: []uint{1, 0, 2, 1, 0, 2, 1, 0, 2},
+			max:         3,
+			objHash:     17,
+		},
+		testCase{
+			expectedIDs: []uint{1, 0, 3, 2, 1, 0, 3, 2},
+			max:         4,
+			objHash:     2,
+		},
+		testCase{
+			expectedIDs: []uint{0, 2, 1, 0, 2, 1},
+			max:         3,
+			objHash:     7,
 		},
 	}
 
 	for tcIdx, tc := range testCases {
 		sp := NewSlabPool(10, 10)
-		for i := 0; i < tc.slabCount; i++ {
-			sp.addSlab()
-		}
 
-		current := (tc.objHash + 1) % uint(tc.slabCount)
-		for i := 0; i < tc.slabCount; i++ {
+		current := tc.objHash % tc.max
+		for i := uint(0); i < uint(len(tc.expectedIDs)); i++ {
+			current = sp.getNextID(current, tc.objHash, tc.max)
 			if current != tc.expectedIDs[i] {
 				t.Fatalf("tc %d: Expected ID to be %d but it was %d", tcIdx, tc.expectedIDs[i], current)
 			}
-			current = sp.getNextSlabID(current, tc.objHash)
 		}
 	}
 }
@@ -123,11 +146,7 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 		var err error
 		// generate twice as many test object as there are objects per slab and add them to slabPool
 		for i := 0; i < int(objsPerSlab*2); i++ {
-			fmt.Println(fmt.Sprintf("adding object %d", i))
-			for i := 0; i < len(sp.slabs); i++ {
-				fmt.Println(sp.slabs[i].String())
-			}
-			value := fmt.Sprintf("%010d", i)
+			value := fmt.Sprintf("%0"+strconv.Itoa(int(objSize))+"d", i)
 			objects[value], _, err = sp.add([]byte(value))
 			So(err, ShouldBeNil)
 		}
@@ -139,10 +158,9 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 			}
 			for value, obj := range objects {
 				returned = sp.get(obj)
-				fmt.Println(fmt.Sprintf("looking for %s at %d, got %s", value, int(obj), string(returned)))
-				// So(string(returned), ShouldEqual, value)
+				So(string(returned), ShouldEqual, value)
 			}
-			// So(len(sp.slabs), ShouldEqual, 2)
+			So(len(sp.slabs), ShouldEqual, 2)
 		})
 	})
 }
