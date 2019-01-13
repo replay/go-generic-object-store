@@ -1,8 +1,10 @@
 package gos
 
 import (
+	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -21,6 +23,31 @@ const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
 // objSize is stored
 type slab struct {
 	objSize uint8
+}
+
+// String creates a long multi-line string which illustrates the slab in a pretty
+// and human-readable format
+func (s *slab) String() string {
+	var b strings.Builder
+	bitSet := s.bitSet()
+	bitSetBytes := bitSet.Bytes()
+	bitSetLen := bitSet.Len()
+	objSize := uint(s.objSize)
+
+	fmt.Fprintf(&b, "-------------------------------\n")
+	fmt.Fprintf(&b, "Slab Addr: %d\n", uintptr(unsafe.Pointer(s)))
+	fmt.Fprintf(&b, "Object Size: %d\n", objSize)
+	fmt.Fprintf(&b, "Objects Per Slab: %d\n", bitSetLen)
+
+	for i := 0; i < len(bitSetBytes); i++ {
+		fmt.Fprintf(&b, "bitSet[%d]: % 08b ", i, bitSetBytes[i])
+		fmt.Fprintf(&b, "\n")
+	}
+
+	for i := uint(0); i < bitSetLen; i++ {
+		fmt.Fprintf(&b, "% 03d\n", s.getObjByIdx(i))
+	}
+	return b.String()
 }
 
 // newSlab initializes a new slab based on the given parameters. It can
@@ -150,7 +177,10 @@ func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 
 	// set the according object slot as used
 	bitSet := s.bitSet()
+	fmt.Println(fmt.Sprintf("setting bit set idx %d", idx))
 	bitSet.Set(idx)
+
+	fmt.Println(fmt.Sprintf("value %s is set at %d", string(s.getObjByIdx(idx)), int(objAddr)))
 
 	return objAddr, bitSet.All(), true
 }

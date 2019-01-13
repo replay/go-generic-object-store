@@ -40,7 +40,7 @@ func (s *slabPool) getNextSlabID(current, objHash uint) uint {
 	objHash++
 	next = current + objHash
 	if next >= slabCount {
-		next = (next - 1) % objHash
+		next = next % slabCount
 	}
 
 	return next
@@ -67,45 +67,28 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 
 	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)))
 
-	var objIdx uint
-	found := false
-	if len(s.slabs) == 0 {
-		objIdx = objHash
-	} else {
-		slabOffsets := objHash
-		slabLen := uint(len(s.slabs))
-		for slabOffsets >= slabLen {
-			slabOffsets = slabOffsets / 10
-		}
-		if slabOffsets == 0 {
-			slabOffsets = 1
-		}
+	slabCount := uint(len(s.slabs))
+	objIdx := objHash
 
-		slabID := slabOffsets
-		for {
-			if !s.freeSlabs.Test(slabID) {
-				slabBitSet := s.slabs[slabID].bitSet()
-				objIdx, found = slabBitSet.NextClear(objHash)
+	found := false
+	var slabIdx uint
+	if slabCount > 0 {
+		slabIdx = objHash % slabCount
+		for i := uint(0); i < slabCount; i++ {
+			if !s.freeSlabs.Test(slabIdx) {
+				slabBitSet := s.slabs[slabIdx].bitSet()
+				objIdx, found = slabBitSet.NextClear(objIdx)
 				if !found {
 					objIdx, found = slabBitSet.NextClear(0)
 				}
 
 				if found {
-					currentSlab = s.slabs[slabID]
+					currentSlab = s.slabs[slabIdx]
 					break
 				}
-			}
 
-			slabID = slabID + slabOffsets
-			if slabID >= slabLen {
-				slabID = slabID%slabOffsets + 1
 			}
-
-			// we looped over all slabIDs
-			if slabID == slabOffsets {
-				break
-			}
-
+			slabIdx = s.getNextSlabID(slabIdx, objHash)
 		}
 	}
 
@@ -116,6 +99,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 			return 0, 0, err
 		}
 		currentSlab = s.slabs[newIdx]
+		slabIdx = uint(newIdx)
 		newSlab = SlabAddr(unsafe.Pointer(currentSlab))
 		objIdx = objHash
 	}
@@ -128,7 +112,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	}
 	if full {
 		// mark that slab as full so nothing more gets added
-		s.freeSlabs.Set(uint(objIdx))
+		s.freeSlabs.Set(slabIdx)
 	}
 
 	return objAddr, newSlab, nil
