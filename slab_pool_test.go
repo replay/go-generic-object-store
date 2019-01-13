@@ -2,6 +2,7 @@ package gos
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 
 	. "github.com/smartystreets/goconvey/convey"
@@ -163,4 +164,36 @@ func TestBatchSearchingObjects(t *testing.T) {
 			So(string(objFromObjAddr(searchResults[7], 5)), ShouldEqual, string(searchTerms[7]))
 		})
 	})
+}
+
+func BenchmarkAddingSearchingObjectInLargePool(b *testing.B) {
+	objSize := uint8(20)
+	objsPerSlab := uint(100)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	type valueAndAddr struct {
+		value []byte
+		addr  ObjAddr
+	}
+	valueCount := 100000
+	testValues := make([]valueAndAddr, valueCount)
+	for i := 0; i < valueCount; i++ {
+		value := []byte(fmt.Sprintf("%20d", i+valueCount))
+		addr, _, err := sp.add([]byte(value))
+		if err != nil {
+			b.Fatalf("Got error on add: %s", err)
+		}
+		testValues[i].value = value
+		testValues[i].addr = addr
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		searchFor := testValues[rand.Int31n(int32(valueCount))]
+		gotAddr, found := sp.search(searchFor.value)
+		if !found || gotAddr != searchFor.addr {
+			b.Fatalf(fmt.Sprintf("Got unexpected result:\nfound: %t\ngot addr: %d\nfound Addr: %d", found, gotAddr, searchFor.addr))
+		}
+	}
 }
