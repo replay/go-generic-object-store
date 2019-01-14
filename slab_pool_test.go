@@ -294,3 +294,51 @@ func BenchmarkAddingSearchingObjectInLargePool(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkAddingSearchingObjectInLargePoolWithDeleteAndReinsert(b *testing.B) {
+	objSize := uint8(20)
+	objsPerSlab := uint(100)
+	sp := NewSlabPool(objSize, objsPerSlab)
+	type valueAndAddr struct {
+		value    []byte
+		objAddr  ObjAddr
+		slabAddr SlabAddr
+	}
+	valueCount := 100000
+	testValues := make([]valueAndAddr, valueCount)
+	var lastSlabAddr SlabAddr
+	for i := 0; i < valueCount; i++ {
+		value := []byte(fmt.Sprintf("%20d", i+valueCount))
+		objAddr, slabAddr, err := sp.add([]byte(value))
+		if err != nil {
+			b.Fatalf("Got error on add: %s", err)
+		}
+		if slabAddr > 0 {
+			lastSlabAddr = slabAddr
+		}
+		testValues[i].value = value
+		testValues[i].objAddr = objAddr
+		testValues[i].slabAddr = lastSlabAddr
+	}
+
+	var err error
+	deletedValues := make([]string, 10)
+	for i := 0; i < valueCount/10; i++ {
+		for j := 0; j < 10; j++ {
+			deleteId := i*10 + j
+			toDelete := testValues[deleteId]
+			err = sp.delete(toDelete.objAddr, toDelete.slabAddr)
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		searchFor := testValues[rand.Int31n(int32(valueCount))]
+		gotAddr, found := sp.search(searchFor.value)
+		if !found || gotAddr != searchFor.addr {
+			b.Fatalf(fmt.Sprintf("Got unexpected result:\nfound: %t\ngot addr: %d\nfound Addr: %d", found, gotAddr, searchFor.addr))
+		}
+	}
+}
