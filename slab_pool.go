@@ -1,6 +1,7 @@
 package gos
 
 import (
+	"encoding/binary"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -9,6 +10,9 @@ import (
 	"sync/atomic"
 	"syscall"
 	"unsafe"
+
+	jump "github.com/dgryski/go-jump"
+	"github.com/willf/bitset"
 )
 
 // slabPool is a struct that contains and manages multiple slabs of data
@@ -17,6 +21,7 @@ type slabPool struct {
 	slabs       []*slab
 	objSize     uint8
 	objsPerSlab uint
+	freeSlabs   bitset.BitSet
 }
 
 // NewSlabPool initializes a new slab pool and returns a pointer to it
@@ -24,7 +29,46 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	return &slabPool{
 		objSize:     objSize,
 		objsPerSlab: objsPerSlab,
+		freeSlabs:   *bitset.New(0),
 	}
+}
+
+func (s *slabPool) getNextSlabID(current, objHash uint) uint {
+	slabCount := uint(len(s.slabs))
+	if objHash >= slabCount {
+		return (current + 1) % slabCount
+	}
+
+	current = s.getNextID(current, objHash, slabCount)
+
+	return current
+}
+
+// getNextID generates the next ID to check foraccording to given parameters
+// those IDs are used to find slabs in slices and objects in slabs
+// current is the last used ID
+// objHash is a hash of the object we find an ID for, it must be > 0 and < max
+// max is the max value that we can accept as ID, exclusive
+func (s *slabPool) getNextID(current, objHash, max uint) uint {
+	var next uint
+
+	if objHash > max {
+		objHash = objHash % max
+	}
+
+	objHash++
+
+	next = current + objHash
+	if next >= max {
+		next = next % objHash
+		if next == 0 {
+			next = objHash - 1
+		} else {
+			next--
+		}
+	}
+
+	return next
 }
 
 // add adds an object to the pool
@@ -36,37 +80,86 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 // If no new slab has been created, then the second value is 0
 // The third value is nil if there was no error, otherwise it is the error
 func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
-	var success bool
-	var objAddr ObjAddr
 	var currentSlab *slab
+	var objHash uint
+	var hashInput []byte
 
-	// find a slab where the addObj call succeeds
-	// on full slabs the returned success value is false
-	for _, currentSlab = range s.slabs {
-		objAddr, success = currentSlab.addObj(obj)
-		if success {
-			// the object has been added
-			return objAddr, 0, nil
+	if len(obj) < 8 {
+		hashInput = append(make([]byte, 8-len(obj)), obj...)
+	} else {
+		hashInput = obj[len(obj)-8:]
+	}
+
+	slabCount := uint(len(s.slabs))
+	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
+	objHash++ // objHash must be >0
+
+	objIdx := objHash
+
+	found := false
+	var slabIdx uint
+	if slabCount > 0 {
+		for i := uint(0); i < slabCount; i++ {
+			slabIdx = s.getNextSlabID(slabIdx, objHash)
+			if !s.freeSlabs.Test(slabIdx) {
+				slabBitSet := s.slabs[slabIdx].bitSet()
+				objIdx, found = slabBitSet.NextClear(objIdx)
+				if !found {
+					objIdx, found = slabBitSet.NextClear(0)
+				}
+
+				if found {
+					currentSlab = s.slabs[slabIdx]
+					break
+				}
+			}
 		}
 	}
 
-	// the previous loop has not found a slab with free space,
-	// so we add a new one
-	var err error
-	currentSlab, err = s.addSlab()
-	if err != nil {
-		return 0, 0, err
+	var newSlab SlabAddr
+	if !found {
+		newIdx, err := s.addSlab()
+		if err != nil {
+			return 0, 0, err
+		}
+		currentSlab = s.slabs[newIdx]
+		slabIdx = uint(newIdx)
+		newSlab = SlabAddr(unsafe.Pointer(currentSlab))
+		objIdx = objHash
 	}
 
-	// add the object to the new slab
-	objAddr, success = currentSlab.addObj(obj)
+	objAddr, full, success := currentSlab.addObj(obj, objIdx)
 	if !success {
-		return 0, 0, fmt.Errorf("Add: Failed adding object to new slab")
+		// this shouldn't happen, because we first checked via freeSlabs
+		// whether this slab has space or not
+		return 0, 0, fmt.Errorf("Add: Failed to add object into slab")
+	}
+	if full {
+		// mark that slab as full so nothing more gets added
+		s.freeSlabs.Set(slabIdx)
 	}
 
-	// a new slab has been created, so its address is returned as
-	// the second return value
-	return objAddr, currentSlab.addr(), nil
+	return objAddr, newSlab, nil
+}
+
+// delete takes an ObjAddr and a SlabAddr, it will delete the according
+// object from the slab at the given address and update all the related
+// properties.
+// On error it returns an error, otherwise nil
+func (s *slabPool) delete(obj ObjAddr, slabAddr SlabAddr) error {
+	empty := slabFromSlabAddr(slabAddr).delete(obj)
+
+	if empty {
+		return s.deleteSlab(slabAddr)
+	} else {
+		// the slab isn't empty, but since we've just deleted an object
+		// we know that there is at least one free slot, so we mark it
+		// accordingly
+		slabIdx := s.findSlabByAddr(slabAddr)
+		s.freeSlabs.Clear(uint(slabIdx))
+	}
+
+	return nil
 }
 
 // findSlabByObjAddr takes an object address or slab address and then
@@ -80,12 +173,12 @@ func (s *slabPool) findSlabByAddr(obj uintptr) int {
 }
 
 // addSlab adds another slab to the pool and initalizes the related structs
-// on success the first returned value is a pointer to the new slab
+// on success the first returned value is the index of the new slab
 // on failure the second returned value is the error message
-func (s *slabPool) addSlab() (*slab, error) {
+func (s *slabPool) addSlab() (int, error) {
 	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	newSlabAddr := addedSlab.addr()
@@ -97,7 +190,42 @@ func (s *slabPool) addSlab() (*slab, error) {
 	copy(s.slabs[insertAt+1:], s.slabs[insertAt:])
 	s.slabs[insertAt] = addedSlab
 
-	return addedSlab, nil
+	s.freeSlabs.InsertAt(uint(insertAt))
+
+	return insertAt, nil
+}
+
+// deleteSlab deletes the slab at the given slab index
+// on success it returns nil, otherwise it returns an error
+func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
+	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
+
+	currentSlab := s.slabs[slabIdx]
+
+	// delete slab id from slab slice
+	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
+	s.slabs[len(s.slabs)-1] = &slab{}
+	s.slabs = s.slabs[:len(s.slabs)-1]
+
+	totalLen := int(currentSlab.getTotalLength())
+
+	// unmap the slab's memory
+	// to do so we need to built a byte slice that refers to the whole
+	// slab as its underlying memory area
+	var toDelete []byte
+	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&toDelete))
+	sliceHeader.Data = uintptr(unsafe.Pointer(currentSlab))
+	sliceHeader.Len = totalLen
+	sliceHeader.Cap = sliceHeader.Len
+
+	err := syscall.Munmap(toDelete)
+	if err != nil {
+		return err
+	}
+
+	s.freeSlabs.DeleteAt(uint(slabIdx))
+
+	return nil
 }
 
 // search searches for a byte slice with the length of
@@ -111,12 +239,36 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 	goMaxProcs := runtime.GOMAXPROCS(0)
 	wg.Add(goMaxProcs)
+	slabCount := len(s.slabs)
+
+	slabIdxChan := make(chan uint, slabCount)
+
+	go func() {
+		var hashInput []byte
+		var objHash uint
+		if len(searching) < 8 {
+			hashInput = append(make([]byte, 8-len(searching)), searching...)
+		} else {
+			hashInput = searching[len(searching)-8:]
+		}
+		objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
+		objHash++ // objHash must be >0
+
+		var slabIdx uint
+		for i := 0; i < slabCount; i++ {
+			slabIdx = s.getNextSlabID(slabIdx, objHash)
+			slabIdxChan <- slabIdx
+		}
+		close(slabIdxChan)
+	}()
+
 	for i := 0; i < goMaxProcs; i++ {
-		go func(routineID int) {
+		go func() {
+			//fmt.Println(fmt.Sprintf("starting new routine at slab idx: %d", slabIdx))
 			defer wg.Done()
 
-			for slabID := routineID; slabID < len(s.slabs); slabID += goMaxProcs {
-				currentSlab := s.slabs[slabID]
+			for slabIdx := range slabIdxChan {
+				currentSlab := s.slabs[slabIdx]
 
 			OBJECT:
 				for objID := uint(0); objID < s.objsPerSlab; objID++ {
@@ -137,10 +289,12 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 				// if result has been found by another thread we can exit this thread
 				if atomic.LoadUintptr(&result) > 0 {
+					//fmt.Println("exiting routine because result was found")
 					return
 				}
 			}
-		}(i)
+			//fmt.Println("exiting routine because we've done all iterations")
+		}()
 	}
 
 	wg.Wait()
@@ -213,35 +367,4 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 // get returns an object of the given object address as a byte slice
 func (s *slabPool) get(obj ObjAddr) []byte {
 	return objFromObjAddr(obj, s.objSize)
-}
-
-// deleteSlab deletes the slab at the given slab index
-// on success it returns nil, otherwise it returns an error
-func (s *slabPool) deleteSlab(slabAddr SlabAddr) error {
-	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
-
-	currentSlab := s.slabs[slabIdx]
-
-	// delete slab id from slab slice
-	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
-	s.slabs[len(s.slabs)-1] = &slab{}
-	s.slabs = s.slabs[:len(s.slabs)-1]
-
-	totalLen := int(currentSlab.getTotalLength())
-
-	// unmap the slab's memory
-	// to do so we need to built a byte slice that refers to the whole
-	// slab as its underlying memory area
-	var toDelete []byte
-	sliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&toDelete))
-	sliceHeader.Data = uintptr(unsafe.Pointer(currentSlab))
-	sliceHeader.Len = totalLen
-	sliceHeader.Cap = sliceHeader.Len
-
-	err := syscall.Munmap(toDelete)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

@@ -200,6 +200,11 @@ func objAddrFromObj(obj []byte) ObjAddr {
 	return ObjAddr(unsafe.Pointer(&obj[0]))
 }
 
+// slabAddrFromSlab takes a slab and returns its SlabAddr
+func slabAddrFromSlab(slab *slab) SlabAddr {
+	return SlabAddr(unsafe.Pointer(slab))
+}
+
 // Add takes an object and adds it to the slab pool of the correct size
 // On success it returns the memory address of the added object as an ObjAddr
 // On failure it returns an error as the second value
@@ -292,15 +297,9 @@ func (o *ObjectStore) Delete(obj ObjAddr) error {
 		return err
 	}
 
-	slab := slabFromSlabAddr(slabAddr)
-	empty := slab.delete(obj)
-
-	// if true then this slab is empty now, so it can be removed
-	if empty {
-		err := o.slabPools[slab.objSize].deleteSlab(slabAddr)
-		if err != nil {
-			return err
-		}
+	err = o.slabPools[slabFromSlabAddr(slabAddr).objSize].delete(obj, slabAddr)
+	if err != nil {
+		return err
 	}
 
 	return nil

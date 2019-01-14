@@ -1,8 +1,10 @@
 package gos
 
 import (
+	"fmt"
 	"math"
 	"reflect"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -21,6 +23,31 @@ const sizeOfBitSet = unsafe.Sizeof(bitset.BitSet{})
 // objSize is stored
 type slab struct {
 	objSize uint8
+}
+
+// String creates a long multi-line string which illustrates the slab in a pretty
+// and human-readable format
+func (s *slab) String() string {
+	var b strings.Builder
+	bitSet := s.bitSet()
+	bitSetBytes := bitSet.Bytes()
+	bitSetLen := bitSet.Len()
+	objSize := uint(s.objSize)
+
+	fmt.Fprintf(&b, "-------------------------------\n")
+	fmt.Fprintf(&b, "Slab Addr: %d\n", uintptr(unsafe.Pointer(s)))
+	fmt.Fprintf(&b, "Object Size: %d\n", objSize)
+	fmt.Fprintf(&b, "Objects Per Slab: %d\n", bitSetLen)
+
+	for i := 0; i < len(bitSetBytes); i++ {
+		fmt.Fprintf(&b, "bitSet[%d]: % 08b ", i, bitSetBytes[i])
+		fmt.Fprintf(&b, "\n")
+	}
+
+	for i := uint(0); i < bitSetLen; i++ {
+		fmt.Fprintf(&b, "% 03d\n", s.getObjByIdx(i))
+	}
+	return b.String()
 }
 
 // newSlab initializes a new slab based on the given parameters. It can
@@ -121,16 +148,10 @@ func (s *slab) getObjIdx(obj ObjAddr) uint {
 // addObj takes an object and adds it to this slice if there is
 // free space for it
 // On success the first return value is the ObjAddr of the newly
-// added object and the second value is true
-// On failure the second return value is false
-func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
-	bitSet := s.bitSet()
-	idx, success := bitSet.NextClear(0)
-	if !success {
-		// there is no free space for another object
-		return 0, false
-	}
-
+// added object, the second value is a bool that indicates if
+// the slab is full, the third value indicates success
+// On failure the third return value is false, otherwise it's true
+func (s *slab) addObj(obj []byte, idx uint) (ObjAddr, bool, bool) {
 	offset := s.getObjOffset(idx)
 
 	// objAddr is used as the unique identifier of the newly created object
@@ -140,24 +161,22 @@ func (s *slab) addObj(obj []byte) (ObjAddr, bool) {
 	src := (*reflect.SliceHeader)(unsafe.Pointer(&obj)).Data
 
 	var i uintptr
-	if len > 8 {
-		// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
-		for ; i < len; i = i + 8 {
-			*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
-		}
+	// if length is more than 8 we simply copy as uint64 one-by-one in 8byte chunks
+	for ; i+8 <= len; i = i + 8 {
+		*(*uint64)(unsafe.Pointer(objAddr + i)) = *(*uint64)(unsafe.Pointer(src + i))
 	}
 
 	// if the length is not divisible by 8 we need to copy the left over data
 	remainder := len % 8
 	if remainder != 0 {
-		*((*uint64)(unsafe.Pointer(objAddr + i))) <<= (remainder * 8)
-		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (math.MaxUint64 >> ((8 - len) * 8)))
+		*((*uint64)(unsafe.Pointer(objAddr + i))) |= (*((*uint64)(unsafe.Pointer(src + i))) & (math.MaxUint64 >> ((8 - remainder) * 8)))
 	}
 
 	// set the according object slot as used
-	s.bitSet().Set(idx)
+	bitSet := s.bitSet()
+	bitSet.Set(idx)
 
-	return objAddr, true
+	return objAddr, bitSet.All(), true
 }
 
 // delete deletes the object at the given object address

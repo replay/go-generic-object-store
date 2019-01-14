@@ -50,7 +50,8 @@ func TestSettingGettingObjects(t *testing.T) {
 
 		Convey("we should be able to set an object", func() {
 			objValue := "abcde"
-			objAddr, success := slab.addObj([]byte(objValue))
+			objAddr, full, success := slab.addObj([]byte(objValue), 0)
+			So(full, ShouldBeFalse)
 			So(success, ShouldBeTrue)
 
 			Convey("and access it via the object address", func() {
@@ -71,7 +72,12 @@ func TestSettingGettingManyObjects(t *testing.T) {
 		Convey("we should be able to fill it up with objects", func() {
 			for i := uint(0); i < objsPerSlab; i++ {
 				value := fmt.Sprintf("%05d", i)
-				objAddr, success := slab.addObj([]byte(value))
+				objAddr, full, success := slab.addObj([]byte(value), i)
+				if i == objsPerSlab-1 {
+					So(full, ShouldBeTrue)
+				} else {
+					So(full, ShouldBeFalse)
+				}
 				So(success, ShouldBeTrue)
 				objAddresses = append(objAddresses, objAddr)
 			}
