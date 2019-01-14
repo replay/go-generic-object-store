@@ -33,12 +33,15 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	}
 }
 
-func (s *slabPool) getNextSlabID(current, objHash uint) uint {
+func (s *slabPool) getNextSlabID(current, objHash uint, advanceBy int) uint {
 	slabCount := uint(len(s.slabs))
 	if objHash >= slabCount {
 		return (current + 1) % slabCount
 	}
-	return s.getNextID(current, objHash, slabCount)
+	for i := 0; i < advanceBy; i++ {
+		current = s.getNextID(current, objHash, slabCount)
+	}
+	return current
 }
 
 // getNextID generates the next ID to check foraccording to given parameters
@@ -97,7 +100,7 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	var slabIdx uint
 	if slabCount > 0 {
 		for i := uint(0); i < slabCount; i++ {
-			slabIdx = s.getNextSlabID(slabIdx, objHash)
+			slabIdx = s.getNextSlabID(slabIdx, objHash, 1)
 			if !s.freeSlabs.Test(slabIdx) {
 				slabBitSet := s.slabs[slabIdx].bitSet()
 				objIdx, found = slabBitSet.NextClear(objIdx)
@@ -236,12 +239,30 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 	goMaxProcs := runtime.GOMAXPROCS(0)
 	wg.Add(goMaxProcs)
+	slabCount := len(s.slabs)
+	var hashInput []byte
+	var objHash uint
+	if len(searching) < 8 {
+		hashInput = append(make([]byte, 8-len(searching)), searching...)
+	} else {
+		hashInput = searching[len(searching)-8:]
+	}
+	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
+	objHash++ // objHash must be >0
+	slabsPerRoutine := slabCount / goMaxProcs
+	if slabCount%goMaxProcs > 0 {
+		slabsPerRoutine++
+	}
+
+	var startingSlabIdx uint
 	for i := 0; i < goMaxProcs; i++ {
-		go func(routineID int) {
+		startingSlabIdx = s.getNextSlabID(startingSlabIdx, objHash, 1)
+		go func(slabIdx uint) {
+			fmt.Println(fmt.Sprintf("starting new routine at slab idx: %d", slabIdx))
 			defer wg.Done()
 
-			for slabID := routineID; slabID < len(s.slabs); slabID += goMaxProcs {
-				currentSlab := s.slabs[slabID]
+			for i := 0; i < slabsPerRoutine; i++ {
+				currentSlab := s.slabs[slabIdx]
 
 			OBJECT:
 				for objID := uint(0); objID < s.objsPerSlab; objID++ {
@@ -262,10 +283,14 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 				// if result has been found by another thread we can exit this thread
 				if atomic.LoadUintptr(&result) > 0 {
+					fmt.Println("exiting routine because result was found")
 					return
 				}
+
+				slabIdx = s.getNextSlabID(slabIdx, objHash, goMaxProcs)
 			}
-		}(i)
+			fmt.Println("exiting routine because we've done all iterations")
+		}(startingSlabIdx)
 	}
 
 	wg.Wait()
