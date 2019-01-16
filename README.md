@@ -21,7 +21,7 @@ Fragmentation is a concern if objects are frequently added and deleted.
 `lookupTable` is a `[]SlabAddr`. `SlabAddr` is a uintptr which stores the memory address of a slab. The lookupTable is sorted in descending order to speed up searches.
 
 #### Slab
-`slab` is a struct which contains a single field: `objSize uint8`. All of the data used by slabs is ***MMapped*** memory which is ignored by the Go GC. We don't actually hold references to any `slab` structs. When we need to access the data contained in a `slab` we convert the starting memory address of the `slab` into a `[]byte`, or adjust the starting address by known offsets and convert the underlying data into a different type.
+`slab` is a struct which contains a single field: `objSize uint8`. All of the data used by slabs is ***MMapped*** memory which is ignored by the Go GC. We don't actually hold references to any `slab` structs. When we need to access the data contained in a `slab` we allocate an empty `[]byte` and point its `Data` field to a memory address in the store, or adjust the memory address by known offsets and convert the underlying data into a different type.
 
 * The 1st byte in a `slab` is the object size of all stored objects inside the `slab` (uint8).
 * The 2nd through 9th (or 5th if running on 32-bit architecture) bytes in a `slab` is the number of objects stored inside the `slab` (uint).
