@@ -71,7 +71,9 @@ func TestAddingAndDeletingObjects(t *testing.T) {
 				}
 
 				Convey("now there should be no slabs anymore", func() {
-					So(len(os.slabPools[5].slabs), ShouldEqual, 0)
+					pool, ok := os.slabPools[5]
+					So(pool, ShouldBeNil)
+					So(ok, ShouldBeFalse)
 				})
 			})
 		})
