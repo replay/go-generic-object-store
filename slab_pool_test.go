@@ -35,7 +35,7 @@ func TestAddingDeletingSlabs(t *testing.T) {
 
 		Convey("then we delete all objects again", func() {
 			for _, objslab := range objs {
-				err := sp.delete(objslab.obj, objslab.slab)
+				_, err := sp.delete(objslab.obj, objslab.slab)
 				So(err, ShouldBeNil)
 			}
 
