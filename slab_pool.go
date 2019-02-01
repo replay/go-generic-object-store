@@ -198,7 +198,8 @@ func (s *slabPool) addSlab() (int, error) {
 }
 
 // deleteSlab deletes the slab at the given slab index
-// on success it returns nil, otherwise it returns an error
+// on failure it returns false and an error
+// on success it returns true and nil
 func (s *slabPool) deleteSlab(slabAddr SlabAddr) (bool, error) {
 	slabIdx := s.findSlabByAddr(uintptr(slabAddr))
 

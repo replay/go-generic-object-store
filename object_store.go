@@ -309,7 +309,7 @@ func (o *ObjectStore) Delete(obj ObjAddr) error {
 		idx := sort.Search(len(o.lookupTable), func(i int) bool { return o.lookupTable[i] <= slabAddr })
 		ok := idx < len(o.lookupTable) && idx >= 0 && o.lookupTable[idx] == slabAddr
 		if !ok {
-			return fmt.Errorf("ObjectStore: Delete failed to remove slab from lookupTable. Index out of bounds: %d", idx)
+			return fmt.Errorf("ObjectStore: Delete failed to remove slab from lookupTable. Index out of bounds or slab address mismatch. IDX: %d, Target Slab Address: %d, Found Slab Address: %d", idx, slabAddr, o.lookupTable[idx])
 		}
 		copy(o.lookupTable[idx:], o.lookupTable[idx+1:])
 		o.lookupTable[len(o.lookupTable)-1] = 0
