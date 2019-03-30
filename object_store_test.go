@@ -123,6 +123,46 @@ func TestAddingAndDeletingLargeNumberOfObjects(t *testing.T) {
 	})
 }
 
+func TestMemStats63Objects(t *testing.T) {
+	objectsPerSlab := uint(63)
+	objectSize := uint8(10)
+
+	objects := [][]byte{
+		[]byte("1234567890"),
+	}
+
+	os := NewObjectStore(objectsPerSlab)
+	for _, o := range objects {
+		os.Add(o)
+	}
+
+	Convey("When using less than 64 objects per slab", t, func() {
+		memSize, err := os.MemStatsByObjSize(objectSize)
+		So(err, ShouldBeNil)
+		So(memSize, ShouldEqual, (1 + 32 + 8 + (10 * 63)))
+	})
+}
+
+func TestMemStats65Objects(t *testing.T) {
+	objectsPerSlab := uint(65)
+	objectSize := uint8(10)
+
+	objects := [][]byte{
+		[]byte("1234567890"),
+	}
+
+	os := NewObjectStore(objectsPerSlab)
+	for _, o := range objects {
+		os.Add(o)
+	}
+
+	Convey("When using less than 64 objects per slab", t, func() {
+		memSize, err := os.MemStatsByObjSize(objectSize)
+		So(err, ShouldBeNil)
+		So(memSize, ShouldEqual, (1 + 32 + 16 + (10 * 65)))
+	})
+}
+
 func BenchmarkAddingDeleting(b *testing.B) {
 	os := NewObjectStore(100)
 
