@@ -33,7 +33,7 @@ func (o *ObjectStore) FragStatsByObjSize(size uint8) (float32, error) {
 		return 0, fmt.Errorf("ObjectStore: FragStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	len := float32(len(o.slabPools[size].slabs))
+	len := float32(len(pool.slabs))
 
 	if len < 1 {
 		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
@@ -84,7 +84,7 @@ func (o *ObjectStore) FragStatsTotal() (float32, error) {
 	return total / numPools, nil
 }
 
-// MemStatsByObjSize returns the size of a slab pool in bytes
+// MemStatsByObjSize returns the size of a slab pool in bytes. It only looks at MMapped memory
 func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
 	// check if pool exists
 	var pool *slabPool
@@ -93,26 +93,15 @@ func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
 		return 0, fmt.Errorf("ObjectStore: MemStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	len := uint64(len(o.slabPools[size].slabs))
+	length := uint64(len(pool.slabs))
 
-	if len < 1 {
+	if length < 1 {
 		return uint64(sizeOfSlabPool), nil
 	}
 
-	var total uint64
-
-	// iterate over all slabs in the pool and add their memory usage
-	for _, sl := range pool.slabs {
-		total += uint64(sl.getTotalLength())
-	}
-
-	// add overhead of the slab pool
-	total += uint64(sizeOfSlabPool)
-
-	// add overhead for each slab in the slice
-	total += uint64(unsafe.Sizeof(uintptr(0))) * len
-
-	return total, nil
+	// add MMapped slab usage for the pool
+	slabLength := uint64(pool.slabs[0].getTotalLength())
+	return length * slabLength, nil
 }
 
 // MemStatsPerPool returns a slice containing a MemStat for each
@@ -128,28 +117,17 @@ func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
 	return
 }
 
-// MemStatsTotal returns the estimated total memory used across the object store
+// MemStatsTotal returns the estimated total MMapped memory used across the object store
 func (o *ObjectStore) MemStatsTotal() (uint64, error) {
 	var total uint64
-	var numPools uint64
 
 	for size := range o.slabPools {
 		memUsed, err := o.MemStatsByObjSize(size)
 		if err != nil {
 			continue
 		}
-		numPools++
 		total += memUsed
 	}
-
-	// add overhead of lookupTable
-	total += uint64(unsafe.Sizeof([]SlabAddr{}))
-	// add overhead of objsPerSlab
-	total += uint64(unsafe.Sizeof(uint(0)))
-	// add overhead of pointers in slabPools
-	total += uint64(unsafe.Sizeof(uintptr(0))) * numPools
-
-	//TODO: add estimated size of the map
 
 	return total, nil
 }
