@@ -55,6 +55,14 @@
   pruneopts = "NUT"
   revision = "3fb80c4041d4fce1c027ff1c416cca3e0dccd97e"
 
+[[projects]]
+  branch = "master"
+  digest = "1:b521f10a2d8fa85c04a8ef4e62f2d1e14d303599a55d64dabf9f5a02f84d35eb"
+  name = "golang.org/x/sync"
+  packages = ["errgroup"]
+  pruneopts = "NUT"
+  revision = "e225da77a7e68af35c70ccbf71af2b83e6acac3c"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
@@ -62,6 +70,7 @@
     "github.com/dgryski/go-jump",
     "github.com/smartystreets/goconvey/convey",
     "github.com/willf/bitset",
+    "golang.org/x/sync/errgroup",
   ]
   solver-name = "gps-cdcl"
   solver-version = 1

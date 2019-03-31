@@ -1,19 +1,22 @@
 package gos
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"reflect"
 	"runtime"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 
 	jump "github.com/dgryski/go-jump"
 	"github.com/willf/bitset"
+	"golang.org/x/sync/errgroup"
 )
+
+const hashRange = 10
 
 // slabPool is a struct that contains and manages multiple slabs of data
 // all objects in all the slabs must have the same size
@@ -33,18 +36,26 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	}
 }
 
-func (s *slabPool) getNextSlabID(current, objHash uint) uint {
-	slabCount := uint(len(s.slabs))
-	if objHash >= slabCount {
+func (s *slabPool) getNextSlabID(current, slabCount uint) uint {
+	// in case of a small slab count there is no need to pay attention to the hash
+	// we can simply iterate over all available slabs
+	if slabCount >= hashRange {
 		return (current + 1) % slabCount
 	}
 
-	current = s.getNextID(current, objHash, slabCount)
+	if slabCount <= hashRange {
+		return (current + 1) % slabCount
+	}
+
+	current += hashRange
+	if current >= slabCount {
+		current = (current + 1) % hashRange
+	}
 
 	return current
 }
 
-// getNextID generates the next ID to check foraccording to given parameters
+// getNextID generates the next ID to check for according to given parameters
 // those IDs are used to find slabs in slices and objects in slabs
 // current is the last used ID
 // objHash is a hash of the object we find an ID for, it must be > 0 and < max
@@ -91,16 +102,14 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 	}
 
 	slabCount := uint(len(s.slabs))
-	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
-	objHash++ // objHash must be >0
-
+	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), hashRange))
 	objIdx := objHash
+	slabIdx := objHash
 
 	found := false
-	var slabIdx uint
 	if slabCount > 0 {
 		for i := uint(0); i < slabCount; i++ {
-			slabIdx = s.getNextSlabID(slabIdx, objHash)
+			slabIdx = s.getNextSlabID(slabIdx, slabCount)
 			if !s.freeSlabs.Test(slabIdx) {
 				slabBitSet := s.slabs[slabIdx].bitSet()
 				objIdx, found = slabBitSet.NextClear(objIdx)
@@ -233,76 +242,207 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) (bool, error) {
 
 // search searches for a byte slice with the length of
 // this slab's objectSize.
-// When found it returns the object address and true,
-// otherwise the second returned value is false
-func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
-	wg := sync.WaitGroup{}
-	objSize := int(s.objSize)
-	var result uintptr
+// When found it returns the object addresses in a slice, the slice offsets
+// of the search results are consistent with the offsets of the search terms
+func (s *slabPool) searchBatched(searches [][]byte) []ObjAddr {
+	type searchTarget struct {
+		searchTerm int
+		slabIdx    uint
+	}
 
-	goMaxProcs := runtime.GOMAXPROCS(0)
-	wg.Add(goMaxProcs)
-	slabCount := len(s.slabs)
+	type searchResult struct {
+		searchTerm int
+		objAddr    ObjAddr
+	}
 
-	slabIdxChan := make(chan uint, slabCount)
+	// the number of procs we want to run is either the value of GOMAXPROCS or the
+	// number of slabs present, whatever is smaller
+	procs := runtime.GOMAXPROCS(0)
+	if procs > len(s.slabs) {
+		procs = len(s.slabs)
+	}
 
-	go func() {
-		var hashInput []byte
-		var objHash uint
-		if len(searching) < 8 {
-			hashInput = append(make([]byte, 8-len(searching)), searching...)
+	searchesLeft := int32(len(searches))
+	slabCount := uint(len(s.slabs))
+	searchTargets := make(chan searchTarget, procs)
+	searchResults := make(chan searchResult, len(searches))
+	foundTargets := make([]uint32, len(searches))
+
+	currentSearchPositions := make([]uint, len(searches))
+	var hashInput []byte
+	for i, searchTerm := range searches {
+		if len(searchTerm) < 8 {
+			hashInput = append(make([]byte, 8-len(searchTerm)), searchTerm...)
 		} else {
-			hashInput = searching[len(searching)-8:]
+			hashInput = searchTerm[len(searchTerm)-8:]
 		}
-		objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
-		objHash++ // objHash must be >0
+		hash := uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), hashRange))
+		currentSearchPositions[i] = hash
+	}
 
-		var slabIdx uint
-		for i := 0; i < slabCount; i++ {
-			slabIdx = s.getNextSlabID(slabIdx, objHash)
-			slabIdxChan <- slabIdx
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	g, ctx := errgroup.WithContext(rootCtx)
+	g.Go(func() error {
+		defer close(searchTargets)
+
+		searchesPerTarget := make([]int, len(searches))
+		for i := range searches {
+			for j := uint(0); j < slabCount; j++ {
+				if atomic.LoadUint32(&foundTargets[i]) > 0 {
+					continue
+				}
+
+				currentSearchPositions[i] = s.getNextSlabID(currentSearchPositions[i], slabCount)
+
+				target := searchTarget{
+					searchTerm: i,
+					slabIdx:    currentSearchPositions[i],
+				}
+				searchesPerTarget[i]++
+
+				select {
+				case <-ctx.Done():
+					return nil
+				case searchTargets <- target:
+				}
+			}
 		}
-		close(slabIdxChan)
-	}()
 
-	for i := 0; i < goMaxProcs; i++ {
-		go func() {
-			//fmt.Println(fmt.Sprintf("starting new routine at slab idx: %d", slabIdx))
-			defer wg.Done()
+		return nil
+	})
 
-			for slabIdx := range slabIdxChan {
-				currentSlab := s.slabs[slabIdx]
+	for i := 0; i < procs; i++ {
+		g.Go(func() error {
+		SEARCH_TARGETS:
+			for target := range searchTargets {
+				if atomic.LoadInt32(&searchesLeft) < 1 {
+					rootCancel()
+					return nil
+				}
 
-			OBJECT:
-				for objID := uint(0); objID < s.objsPerSlab; objID++ {
+				slab := s.slabs[target.slabIdx]
+				searchTerm := searches[target.searchTerm]
 
-					if currentSlab.bitSet().Test(objID) {
-						obj := currentSlab.getObjByIdx(objID)
-						for j := 0; j < objSize; j++ {
-							if obj[j] != searching[j] {
-								continue OBJECT
+			OBJECTS:
+				for objIdx := uint(0); objIdx < s.objsPerSlab; objIdx++ {
+					if slab.bitSet().Test(objIdx) {
+						obj := slab.getObjByIdx(objIdx)
+						for j := 0; j < len(obj); j++ {
+							if obj[j] != searchTerm[j] {
+								continue OBJECTS
 							}
 						}
 
-						// found it, store the result atomically
-						atomic.StoreUintptr(&result, objAddrFromObj(obj))
-						return
+						// found the term
+						atomic.StoreUint32(&foundTargets[target.searchTerm], 1)
+						atomic.AddInt32(&searchesLeft, -1)
+						searchResults <- searchResult{
+							searchTerm: target.searchTerm,
+							objAddr:    objAddrFromObj(obj),
+						}
+
+						continue SEARCH_TARGETS
 					}
 				}
-
-				// if result has been found by another thread we can exit this thread
-				if atomic.LoadUintptr(&result) > 0 {
-					//fmt.Println("exiting routine because result was found")
-					return
-				}
 			}
-			//fmt.Println("exiting routine because we've done all iterations")
-		}()
+
+			return nil
+		})
 	}
 
-	wg.Wait()
+	go func() {
+		g.Wait()
+		rootCancel()
+		close(searchResults)
+	}()
 
-	return result, result > 0
+	returnValue := make([]ObjAddr, len(searches))
+	for result := range searchResults {
+		fmt.Println(fmt.Sprintf("setting result %+v", result))
+		returnValue[result.searchTerm] = result.objAddr
+	}
+
+	return returnValue
+
+	// objSize := int(s.objSize)
+
+	// slabIndexes := make(chan uint)
+	// g, ctx := errgroup.WithContext(nil)
+	// g.Go(func() error {
+	// 	defer close(slabIndexes)
+	// 	var hashInput []byte
+	// 	var objHash uint
+	// 	if len(searches) < 8 {
+	// 		hashInput = append(make([]byte, 8-len(searches)), searches...)
+	// 	} else {
+	// 		hashInput = searches[len(searches)-8:]
+	// 	}
+	// 	objHash = uint(jump.Hash(binary.LittleEndian.Uint64(hashInput), int(s.objsPerSlab)-1))
+	// 	objHash++ // objHash must be >0
+
+	// 	var slabIdx uint
+	// 	for i := 0; i < len(s.slabs); i++ {
+	// 		slabIdx = s.getNextSlabID(slabIdx, objHash)
+	// 		slabIndexes <- slabIdx
+	// 	}
+
+	// 	return nil
+	// })
+
+	// searchesLeft := int32(len(searches))
+	// results := make([]ObjAddr, len(searches))
+	// for i := 0; i < procs; i++ {
+	// 	g.Go(func() error {
+	// 		for slabIdx := range slabIndexes {
+	// 			if atomic.LoadInt32(&searchesLeft) <= 0 {
+	// 				return nil
+	// 			}
+
+	// 			currentSlab := s.slabs[slabIdx]
+	// 			for objID := uint(0); objID < s.objsPerSlab; objID++ {
+	// 				if currentSlab.bitSet().Test(objID) {
+	// 					obj := currentSlab.getObjByIdx(objID)
+
+	// 				SEARCH:
+	// 					for j, search := range searches {
+	// 						if atomic.LoadUintptr(&results[j]) != 0 {
+	// 							continue SEARCH
+	// 						}
+
+	// 						for k := 0; k < objSize; k++ {
+	// 							if obj[k] != search[k] {
+	// 								continue SEARCH
+	// 							}
+	// 						}
+
+	// 						atomic.StoreUintptr(&results[j], ObjAddr(objID))
+	// 						if atomic.AddInt32(&searchesLeft, -1) == 0 {
+	// 							return nil
+	// 						}
+	// 					}
+
+	// 					select {
+	// 					case <-ctx.Done():
+	// 						return ctx.Err()
+	// 					}
+	// 				}
+	// 			}
+
+	// 			select {
+	// 			case <-ctx.Done():
+	// 				return ctx.Err()
+	// 			}
+	// 		}
+
+	// 		return nil
+	// 	})
+	// }
+
+	// go func() {
+	// 	g.Wait()
+	// 	close(results)
+	// }()
+
 }
 
 // searchBatched searches for a batch of search objects.
@@ -313,8 +453,8 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 // in the returned slice as it was in the search slice.
 // If a searched object has not been found, then the value in the returned
 // slice is 0 at the index of the searched object.
-func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
-	wg := sync.WaitGroup{}
+func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
+	/*wg := sync.WaitGroup{}
 
 	// preallocate the result set that will be returned
 	resultSet := make([]ObjAddr, len(searching))
@@ -364,7 +504,8 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 
 	wg.Wait()
 
-	return resultSet
+	return resultSet*/
+	return 0, false
 }
 
 // get returns an object of the given object address as a byte slice

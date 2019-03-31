@@ -168,29 +168,33 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 func TestAddingSearchingObject(t *testing.T) {
 	objSize := uint8(5)
 	objsPerSlab := uint(1)
-	sp := NewSlabPool(objSize, objsPerSlab)
 	testString1 := "abcde"
 	testString2 := "aaaaa"
 	var objAddr1, objAddr2 ObjAddr
 	var success bool
-	Convey("When adding a byte slice to the pool", t, func() {
-		sp.add([]byte(testString1))
+	Convey("After initializing the slap pool", t, func() {
+		sp := NewSlabPool(objSize, objsPerSlab)
 
-		Convey("we should be able to find it with the search method", func() {
-			objAddr1, success = sp.search([]byte(testString1))
-			So(success, ShouldBeTrue)
-			result1 := sp.get(objAddr1)
-			So(string(result1), ShouldEqual, testString1)
+		Convey("When adding a byte slice to the pool", func() {
+			sp.add([]byte(testString1))
+
+			Convey("we should be able to find it with the search method", func() {
+				objAddr1, success = sp.search([]byte(testString1))
+				So(success, ShouldBeTrue)
+				result1 := sp.get(objAddr1)
+				So(string(result1), ShouldEqual, testString1)
+			})
 		})
-	})
-	Convey("When adding a second object", t, func() {
-		sp.add([]byte(testString2))
 
-		Convey("we should also be able to find it", func() {
-			objAddr2, success = sp.search([]byte(testString2))
-			So(success, ShouldBeTrue)
-			result2 := sp.get(objAddr2)
-			So(string(result2), ShouldEqual, testString2)
+		Convey("When adding a second object", func() {
+			sp.add([]byte(testString2))
+
+			Convey("we should also be able to find it", func() {
+				objAddr2, success = sp.search([]byte(testString2))
+				So(success, ShouldBeTrue)
+				result2 := sp.get(objAddr2)
+				So(string(result2), ShouldEqual, testString2)
+			})
 		})
 	})
 }
@@ -199,8 +203,8 @@ func TestAddingSearchingObjectInManySlabs(t *testing.T) {
 	objSize := uint8(5)
 	objsPerSlab := uint(10)
 	expectedSlabs := uint(100)
-	sp := NewSlabPool(objSize, objsPerSlab)
 	Convey(fmt.Sprintf("When adding %d objects to the pool", objsPerSlab*expectedSlabs), t, func() {
+		sp := NewSlabPool(objSize, objsPerSlab)
 		for i := uint(0); i < expectedSlabs*objsPerSlab; i++ {
 			objAddr, _, err := sp.add([]byte(fmt.Sprintf("%05d", i)))
 			So(err, ShouldBeNil)
@@ -259,6 +263,45 @@ func TestBatchSearchingObjects(t *testing.T) {
 			So(string(objFromObjAddr(searchResults[4], 5)), ShouldEqual, string(searchTerms[4]))
 			So(string(objFromObjAddr(searchResults[6], 5)), ShouldEqual, string(searchTerms[6]))
 			So(string(objFromObjAddr(searchResults[7], 5)), ShouldEqual, string(searchTerms[7]))
+		})
+	})
+}
+
+func TestSearchBatch(t *testing.T) {
+	objSize := uint8(5)
+	objsPerSlab := uint(30)
+	slabs := uint(100)
+	Convey("When creating a new slab pool", t, func() {
+		sp := NewSlabPool(objSize, objsPerSlab)
+
+		Convey(fmt.Sprintf("And adding %d objects to it", objsPerSlab*slabs), func() {
+			for i := uint(0); i < objsPerSlab*slabs; i++ {
+				sp.add([]byte(fmt.Sprintf("%05d", i)))
+			}
+
+			Convey("Then we should be able to search for the objects in batches", func() {
+				searchTerms := []string{"01473", "00831", "00000", "02999", "01234", "02222"}
+
+				batch := make([][]byte, len(searchTerms))
+				for i, term := range searchTerms {
+					batch[i] = []byte(term)
+				}
+				searchResult := sp.searchBatched(batch)
+				searchResultStrings := make([]string, len(searchResult))
+				for i := range searchResult {
+					if searchResult[i] == 0 {
+						continue
+					}
+					searchResultStrings[i] = string(objFromObjAddr(searchResult[i], 5))
+				}
+
+				for i, result := range searchResultStrings {
+					if result != searchTerms[i] {
+						fmt.Println(fmt.Sprintf("\nsearches: %+v\nresults: %+v", searchTerms, searchResultStrings))
+						t.Fatalf("Results and search terms are expected to match, but they don't")
+					}
+				}
+			})
 		})
 	})
 }
