@@ -2,7 +2,7 @@
 
 ## Introduction
 
-go-generic-object-store is a small, fast, light-weight, in-memory, off-heap library designed specifically for use with string interning and other similar redundancy reduction concepts.
+go-generic-object-store is a small, fast, light-weight, in-memory, off-heap (off of the Go heap) library designed specifically for use with string interning and other similar redundancy reduction concepts.
 
 ## Design
 
