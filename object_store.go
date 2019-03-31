@@ -33,34 +33,17 @@ func (o *ObjectStore) FragStatsByObjSize(size uint8) (float32, error) {
 		return 0, fmt.Errorf("ObjectStore: FragStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	len := float32(len(pool.slabs))
-
-	if len < 1 {
-		return 0, fmt.Errorf("ObjectStore: No slabs found in pool for object size %d", size)
-	}
-
-	var total float32
-
-	// iterate over all slabs in the pool
-	// get fragmentation percent
-	for _, sl := range pool.slabs {
-		total += float32(sl.bitSet().Count()) / float32(sl.objsPerSlab())
-	}
-
-	return total / len, nil
+	return pool.fragStats(), nil
 }
 
 // FragStatsPerPool returns a slice containing a FragStat for each
 // non-empty slab pool
 func (o *ObjectStore) FragStatsPerPool() (fragStats []FragStat) {
-	for size, sl := range o.slabPools {
-		fragPercent, err := o.FragStatsByObjSize(size)
-		if err != nil {
-			continue
-		}
-		fragStats = append(fragStats, FragStat{ObjSize: size, ObjsPerSlab: sl.objsPerSlab, FragPercent: fragPercent})
+	for _, sl := range o.slabPools {
+		fragPercent := sl.fragStats()
+		fragStats = append(fragStats, FragStat{ObjSize: sl.objSize, ObjsPerSlab: sl.objsPerSlab, FragPercent: fragPercent})
 	}
-	return
+	return fragStats
 }
 
 // FragStatsTotal returns the total fragmentation percent across the object store
@@ -68,13 +51,12 @@ func (o *ObjectStore) FragStatsTotal() (float32, error) {
 	var total float32
 	var numPools float32
 
-	for size := range o.slabPools {
-		fragPercent, err := o.FragStatsByObjSize(size)
-		if err != nil {
+	for _, sl := range o.slabPools {
+		if len(sl.slabs) < 1 {
 			continue
 		}
 		numPools++
-		total += fragPercent
+		total += sl.fragStats()
 	}
 
 	if numPools < 1 {
@@ -93,14 +75,14 @@ func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
 		return 0, fmt.Errorf("ObjectStore: MemStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	return pool.getMemStats(), nil
+	return pool.memStats(), nil
 }
 
 // MemStatsPerPool returns a slice containing a MemStat for each
 // non-empty slab pool
 func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
 	for _, p := range o.slabPools {
-		memUsed := p.getMemStats()
+		memUsed := p.memStats()
 		memStats = append(memStats, MemStat{ObjSize: p.objSize, MemUsed: memUsed})
 	}
 	return
@@ -111,7 +93,7 @@ func (o *ObjectStore) MemStatsTotal() (uint64, error) {
 	var total uint64
 
 	for _, p := range o.slabPools {
-		total += p.getMemStats()
+		total += p.memStats()
 	}
 
 	return total, nil

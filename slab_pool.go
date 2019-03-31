@@ -33,7 +33,25 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	}
 }
 
-func (s *slabPool) getMemStats() uint64 {
+func (s *slabPool) fragStats() float32 {
+	length := float32(len(s.slabs))
+
+	if length < 1 {
+		return 0.0
+	}
+
+	var total float32
+
+	// iterate over all slabs in the pool
+	// get fragmentation percent
+	for _, sl := range s.slabs {
+		total += float32(sl.bitSet().Count()) / float32(sl.objsPerSlab())
+	}
+
+	return total / length
+}
+
+func (s *slabPool) memStats() uint64 {
 	length := uint64(len(s.slabs))
 
 	if length < 1 {
