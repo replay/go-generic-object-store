@@ -33,6 +33,18 @@ func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
 	}
 }
 
+func (s *slabPool) getMemStats() uint64 {
+	length := uint64(len(s.slabs))
+
+	if length < 1 {
+		return 0
+	}
+
+	// add MMapped slab usage for the pool
+	slabLength := uint64(s.slabs[0].getTotalLength())
+	return length * slabLength
+}
+
 func (s *slabPool) getNextSlabID(current, objHash uint) uint {
 	slabCount := uint(len(s.slabs))
 	if objHash >= slabCount {

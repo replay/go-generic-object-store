@@ -93,26 +93,15 @@ func (o *ObjectStore) MemStatsByObjSize(size uint8) (uint64, error) {
 		return 0, fmt.Errorf("ObjectStore: MemStatsByObjSize failed to find pool with object size %d", size)
 	}
 
-	length := uint64(len(pool.slabs))
-
-	if length < 1 {
-		return uint64(sizeOfSlabPool), nil
-	}
-
-	// add MMapped slab usage for the pool
-	slabLength := uint64(pool.slabs[0].getTotalLength())
-	return length * slabLength, nil
+	return pool.getMemStats(), nil
 }
 
 // MemStatsPerPool returns a slice containing a MemStat for each
 // non-empty slab pool
 func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
-	for size := range o.slabPools {
-		memUsed, err := o.MemStatsByObjSize(size)
-		if err != nil {
-			continue
-		}
-		memStats = append(memStats, MemStat{ObjSize: size, MemUsed: memUsed})
+	for _, p := range o.slabPools {
+		memUsed := p.getMemStats()
+		memStats = append(memStats, MemStat{ObjSize: p.objSize, MemUsed: memUsed})
 	}
 	return
 }
@@ -121,12 +110,8 @@ func (o *ObjectStore) MemStatsPerPool() (memStats []MemStat) {
 func (o *ObjectStore) MemStatsTotal() (uint64, error) {
 	var total uint64
 
-	for size := range o.slabPools {
-		memUsed, err := o.MemStatsByObjSize(size)
-		if err != nil {
-			continue
-		}
-		total += memUsed
+	for _, p := range o.slabPools {
+		total += p.getMemStats()
 	}
 
 	return total, nil
