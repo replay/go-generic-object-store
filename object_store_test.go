@@ -18,7 +18,7 @@ func TestAddingGettingObjects13(t *testing.T) {
 }
 
 func testAddingGettingObjects(t *testing.T, objPerSlab, start, stop uint64) {
-	os := NewObjectStore(uint(objPerSlab))
+	os := NewObjectStore(NewConfig())
 
 	testData := make(map[string]ObjAddr)
 	for i := start; i < stop; i++ {
@@ -46,7 +46,10 @@ func testAddingGettingObjects(t *testing.T, objPerSlab, start, stop uint64) {
 func TestAddingAndDeletingObjects(t *testing.T) {
 	objectsPerSlab := uint(3)
 	expectedSlabs := uint(3)
-	os := NewObjectStore(objectsPerSlab)
+	c := NewConfig()
+	c.BaseObjectsPerSlab = objectsPerSlab
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 
 	testData := make(map[string]ObjAddr)
 	for i := uint(0); i < objectsPerSlab*expectedSlabs; i++ {
@@ -90,7 +93,10 @@ func TestAddingAndDeletingLargeNumberOfObjects(t *testing.T) {
 		testData[fmt.Sprintf("%0"+strconv.Itoa(objectSizes[i%uint(len(objectSizes))])+"d", i)] = 0
 	}
 
-	os := NewObjectStore(objectsPerSlab)
+	c := NewConfig()
+	c.BaseObjectsPerSlab = objectsPerSlab
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 
 	Convey("When adding lots of test data to object store", t, func() {
 		for k := range testData {
@@ -131,7 +137,10 @@ func TestMemStats63Objects(t *testing.T) {
 		[]byte("1234567890"),
 	}
 
-	os := NewObjectStore(objectsPerSlab)
+	c := NewConfig()
+	c.BaseObjectsPerSlab = objectsPerSlab
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 	for _, o := range objects {
 		os.Add(o)
 	}
@@ -151,7 +160,10 @@ func TestMemStats65Objects(t *testing.T) {
 		[]byte("1234567890"),
 	}
 
-	os := NewObjectStore(objectsPerSlab)
+	c := NewConfig()
+	c.BaseObjectsPerSlab = objectsPerSlab
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 	for _, o := range objects {
 		os.Add(o)
 	}
@@ -164,7 +176,10 @@ func TestMemStats65Objects(t *testing.T) {
 }
 
 func BenchmarkAddingDeleting(b *testing.B) {
-	os := NewObjectStore(100)
+	c := NewConfig()
+	c.BaseObjectsPerSlab = 100
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 
 	testData := make(map[string]ObjAddr)
 	for i := 0; i < 99999; i++ {
@@ -187,7 +202,11 @@ func BenchmarkAddingDeleting(b *testing.B) {
 func BenchmarkSearchingForValue(b *testing.B) {
 	testValueCount := 1000000
 	testValues := make([][]byte, testValueCount)
-	os := NewObjectStore(100)
+
+	c := NewConfig()
+	c.BaseObjectsPerSlab = 100
+	c.GrowSlabs = false
+	os := NewObjectStore(c)
 
 	for i := 0; i < testValueCount; i++ {
 		testValues[i] = []byte(fmt.Sprintf("%x", md5.Sum([]byte(fmt.Sprintf("%d", i)))))
