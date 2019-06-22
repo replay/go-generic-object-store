@@ -106,13 +106,15 @@ type ObjectStore struct {
 	slabPools   map[uint8]*slabPool
 	lookupTable []SlabAddr
 	objsPerSlab uint
+	config      ObjectStoreConfig
 }
 
-// NewObjectStore initializes a new object store with the given number of objects per slab,
-// it returns the object store as a value
-func NewObjectStore(objsPerSlab uint) ObjectStore {
+// NewObjectStore initializes a new object store with the given configuration
+// Once an object store has been initialized its configuration cannot be changed
+func NewObjectStore(c ObjectStoreConfig) ObjectStore {
 	return ObjectStore{
-		objsPerSlab: objsPerSlab,
+		config:      c,
+		objsPerSlab: c.BaseObjectsPerSlab,
 		slabPools:   make(map[uint8]*slabPool),
 	}
 }
