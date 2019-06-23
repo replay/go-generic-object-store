@@ -2,9 +2,11 @@ package gos
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"strconv"
 	"testing"
+	"unsafe"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -186,6 +188,77 @@ func TestBatchSearchingObjects(t *testing.T) {
 			So(string(objFromObjAddr(searchResults[4], 5)), ShouldEqual, string(searchTerms[4]))
 			So(string(objFromObjAddr(searchResults[6], 5)), ShouldEqual, string(searchTerms[6]))
 			So(string(objFromObjAddr(searchResults[7], 5)), ShouldEqual, string(searchTerms[7]))
+		})
+	})
+}
+
+func TestFragmentedSlabPoolSizes(t *testing.T) {
+	Convey("When adding 63 object with base objs per slab 1 and growth factor 2", t, func() {
+		// config for objCounts per slab: 1, 2, 4, 8, 16
+		baseObjsPerSlab := uint8(1)
+		growthFactor := float64(2)
+
+		pool := NewSlabPool(10)
+		slabID := 0
+		var i int
+		var objAddrs []ObjAddr
+
+		// generate 6 slabs (2^6-1 objects)
+		for i = 0; i < 63; i++ {
+			objAddr, slabAddr, err := pool.add([]byte(fmt.Sprintf("%10d", i)), baseObjsPerSlab, growthFactor)
+			So(err, ShouldBeNil)
+			if i == int(math.Pow(float64(2), float64(slabID)))-1 {
+				So(slabAddr, ShouldNotBeNil)
+				slabID++
+			} else {
+				So(slabAddr, ShouldBeZeroValue)
+			}
+
+			objAddrs = append(objAddrs, objAddr)
+		}
+
+		So(len(pool.slabs), ShouldEqual, 6)
+
+		Convey("When delete all objects except the last one again", func() {
+			slabID = 0
+			i = 0
+			for i = 0; i < 62; i++ {
+				empty, err := pool.delete(objAddrs[i], uintptr(unsafe.Pointer(pool.slabs[pool.findSlabByAddr(objAddrs[i])])))
+				So(err, ShouldBeNil)
+				if i == int(math.Pow(float64(2), float64(slabID+1)))-2 {
+					So(empty, ShouldBeTrue)
+					slabID++
+				} else {
+					So(empty, ShouldBeFalse)
+				}
+			}
+
+			So(len(pool.slabs), ShouldEqual, 1)
+
+			Convey("When refilling the existing slab, no new ones should be created", func() {
+				i = 0
+				for i = 0; i < int(pool.slabs[0].objCount()-1); i++ {
+					_, slabAddr, err := pool.add([]byte(fmt.Sprintf("%10d", i)), baseObjsPerSlab, growthFactor)
+					So(err, ShouldBeNil)
+					So(slabAddr, ShouldBeZeroValue)
+				}
+
+				// last slab has 2^5 objects, so 2^5-1 = 31
+				So(i, ShouldEqual, 31)
+
+				So(len(pool.slabs), ShouldEqual, 1)
+
+				Convey("When adding one more object, a new slab with the size of the 2nd slab should get created", func() {
+					objAddr, slabAddr, err := pool.add([]byte(fmt.Sprintf("%10d", 0)), baseObjsPerSlab, growthFactor)
+					So(err, ShouldBeNil)
+					So(objAddr, ShouldNotEqual, 0)
+					So(slabAddr, ShouldNotEqual, 0)
+					So(len(pool.slabs), ShouldEqual, 2)
+
+					// with baseObjsPerSlab = 1 & growthFactor = 2 the second slab should have the size of 2 objects
+					So(pool.slabs[pool.findSlabByAddr(objAddr)].objCount(), ShouldEqual, 2)
+				})
+			})
 		})
 	})
 }
