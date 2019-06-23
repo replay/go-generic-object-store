@@ -222,6 +222,9 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) (bool, error) {
 // this slab's objectSize.
 // When found it returns the object address and true,
 // otherwise the second returned value is false
+// Warning: This method is very slow, it relies on
+// scanning through all the data without any index,
+// only use it when there's no other choice
 func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 	wg := sync.WaitGroup{}
 	objSize := int(s.objSize)
