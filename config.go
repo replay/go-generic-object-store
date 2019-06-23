@@ -7,7 +7,6 @@ var Config = NewConfig()
 // Please see the documentation at https://github.com/replay/go-generic-object-store
 // for more information
 type ObjectStoreConfig struct {
-	GrowSlabs          bool
 	BaseObjectsPerSlab uint
 	GrowthExponent     float64 // for use with math.Pow this is easier
 	GrowthFactor       float64 // ^^
@@ -19,7 +18,6 @@ type ObjectStoreConfig struct {
 // more information.
 func NewConfig() ObjectStoreConfig {
 	return ObjectStoreConfig{
-		GrowSlabs:          true,
 		BaseObjectsPerSlab: 25,
 		GrowthExponent:     5,
 		GrowthFactor:       1.3,
