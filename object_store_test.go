@@ -48,7 +48,7 @@ func TestAddingAndDeletingObjects(t *testing.T) {
 	expectedSlabs := uint(3)
 	c := NewConfig()
 	c.BaseObjectsPerSlab = objectsPerSlab
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 
 	testData := make(map[string]ObjAddr)
@@ -95,7 +95,7 @@ func TestAddingAndDeletingLargeNumberOfObjects(t *testing.T) {
 
 	c := NewConfig()
 	c.BaseObjectsPerSlab = objectsPerSlab
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 
 	Convey("When adding lots of test data to object store", t, func() {
@@ -139,7 +139,7 @@ func TestMemStats63Objects(t *testing.T) {
 
 	c := NewConfig()
 	c.BaseObjectsPerSlab = objectsPerSlab
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 	for _, o := range objects {
 		os.Add(o)
@@ -162,7 +162,7 @@ func TestMemStats65Objects(t *testing.T) {
 
 	c := NewConfig()
 	c.BaseObjectsPerSlab = objectsPerSlab
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 	for _, o := range objects {
 		os.Add(o)
@@ -178,7 +178,7 @@ func TestMemStats65Objects(t *testing.T) {
 func BenchmarkAddingDeleting(b *testing.B) {
 	c := NewConfig()
 	c.BaseObjectsPerSlab = 100
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 
 	testData := make(map[string]ObjAddr)
@@ -205,7 +205,7 @@ func BenchmarkSearchingForValue(b *testing.B) {
 
 	c := NewConfig()
 	c.BaseObjectsPerSlab = 100
-	c.GrowSlabs = false
+	c.GrowthExponent = 1
 	os := NewObjectStore(c)
 
 	for i := 0; i < testValueCount; i++ {
