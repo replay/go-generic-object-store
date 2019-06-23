@@ -46,41 +46,40 @@ func TestAddingDeletingSlabs(t *testing.T) {
 }
 
 func TestAddingGettingManyObjects8(t *testing.T) {
-	testAddingGettingManyObjects(t, 8, 10)
+	testAddingGettingManyObjects(t, 8, 10, 1.3)
 }
 
 func TestAddingGettingManyObjects10(t *testing.T) {
-	testAddingGettingManyObjects(t, 10, 10)
+	testAddingGettingManyObjects(t, 10, 10, 100)
 }
 
 func TestAddingGettingManyObjects13(t *testing.T) {
-	testAddingGettingManyObjects(t, 13, 10)
+	testAddingGettingManyObjects(t, 13, 2, 1)
 }
 
 func TestAddingGettingManyObjects15(t *testing.T) {
-	testAddingGettingManyObjects(t, 15, 10)
+	testAddingGettingManyObjects(t, 15, 100, 2)
 }
 
 func TestAddingGettingManyObjects16(t *testing.T) {
-	testAddingGettingManyObjects(t, 16, 10)
+	testAddingGettingManyObjects(t, 16, 2, 3)
 }
 
 func TestAddingGettingManyObjects17(t *testing.T) {
-	testAddingGettingManyObjects(t, 17, 10)
+	testAddingGettingManyObjects(t, 17, 10, 4)
 }
 
-func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
-	objSize := uint8(objSz)
-	objsPerSlab := uint(objsPer)
+func testAddingGettingManyObjects(t *testing.T, objSize, baseObjCount uint8, growthFactor float64) {
 	sp := NewSlabPool(objSize)
 	objects := make(map[string]ObjAddr)
 
 	Convey("When generating a set of many test objects", t, func() {
 		var err error
+		var i int
 		// generate twice as many test object as there are objects per slab and add them to slabPool
-		for i := 0; i < int(objsPerSlab*2); i++ {
+		for ; i < int(baseObjCount)*75; i++ {
 			value := fmt.Sprintf("%0"+strconv.Itoa(int(objSize))+"d", i)
-			objects[value], _, err = sp.add([]byte(value), uint8(objsPerSlab), 1)
+			objects[value], _, err = sp.add([]byte(value), baseObjCount, growthFactor)
 			So(err, ShouldBeNil)
 		}
 
@@ -90,7 +89,28 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 				returned = sp.get(obj)
 				So(string(returned), ShouldEqual, value)
 			}
-			So(len(sp.slabs), ShouldEqual, 2)
+
+			Convey("Then we delete all except one again", func() {
+				skippedObject := ""
+				for value, obj := range objects {
+					if skippedObject == "" {
+						skippedObject = value
+						continue
+					}
+					sp.delete(obj, uintptr(unsafe.Pointer(sp.slabs[sp.findSlabByAddr(obj)])))
+				}
+
+				So(len(sp.slabs), ShouldEqual, 1)
+
+				Convey("When we then re-add all the deleted ones again", func() {
+					for value := range objects {
+						if value == skippedObject {
+							continue
+						}
+						sp.add([]byte(value), baseObjCount, growthFactor)
+					}
+				})
+			})
 		})
 	})
 }
