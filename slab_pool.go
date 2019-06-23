@@ -191,7 +191,9 @@ func (s *slabPool) deleteSlab(slabAddr SlabAddr) (bool, error) {
 	currentSlab := s.slabs[slabIdx]
 
 	// delete slab id from slab slice
-	copy(s.slabs[slabIdx:], s.slabs[slabIdx+1:])
+	for i := slabIdx + 1; i < len(s.slabs); i++ {
+		s.slabs[i-1] = s.slabs[i]
+	}
 	s.slabs[len(s.slabs)-1] = &slab{}
 	s.slabs = s.slabs[:len(s.slabs)-1]
 

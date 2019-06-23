@@ -315,6 +315,72 @@ func BenchmarkAddingSearchingObjectInLargePool(b *testing.B) {
 	}
 }
 
+func BenchmarkAddingObjectsGrowthFactor1_3(b *testing.B) {
+	sp := NewSlabPool(10)
+
+	objs := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		objs[i] = []byte(fmt.Sprintf("%10d", i))
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := range objs {
+		sp.add(objs[i], 10, 1.3)
+	}
+}
+func BenchmarkAddingObjectsGrowthFactor2(b *testing.B) {
+	sp := NewSlabPool(10)
+
+	objs := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		objs[i] = []byte(fmt.Sprintf("%10d", i))
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := range objs {
+		sp.add(objs[i], 10, 2)
+	}
+}
+func BenchmarkAddingObjectsGrowthFactor4(b *testing.B) {
+	sp := NewSlabPool(10)
+
+	objs := make([][]byte, b.N)
+	for i := 0; i < b.N; i++ {
+		objs[i] = []byte(fmt.Sprintf("%10d", i))
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := range objs {
+		sp.add(objs[i], 10, 2)
+	}
+}
+
+func BenchmarkDeletingObjectsAndSlabs(b *testing.B) {
+	sp := NewSlabPool(10)
+
+	type result struct {
+		obj  ObjAddr
+		slab SlabAddr
+	}
+	results := make([]result, b.N)
+	for i := 0; i < b.N; i++ {
+		results[i].obj, results[i].slab, _ = sp.add([]byte(fmt.Sprintf("%10d", i)), 1, 1)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := range results {
+		sp.delete(results[i].obj, results[i].slab)
+	}
+}
+
 // func BenchmarkAddingSearchingObjectInLargePoolWithDeleteAndReinsert(b *testing.B) {
 // 	objSize := uint8(20)
 // 	objsPerSlab := uint(100)
