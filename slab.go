@@ -51,21 +51,34 @@ func (s *slab) String() string {
 	return b.String()
 }
 
+// bitSetWordsFor takes a length and calculates how many words (uint64)
+// of space the bitset will need to store that many objects
+// this is mostly copied from github.com/willf/bitset.wordsNeeded()
+func bitSetWordsFor(length uint) int {
+	cap := ^uint(0)
+	wordSize := uint(64)
+	log2WordSize := uint(6)
+
+	if length > (cap - wordSize + 1) {
+		return int(cap >> log2WordSize)
+	}
+
+	return int((length + (wordSize - 1)) >> log2WordSize)
+}
+
 // newSlab initializes a new slab based on the given parameters. It can
 // potentially error if the memory allocation call fails
 // On success the first return value is a pointer to the new slab and the
 // second value is nil
 // On failure the second returned value is an error
 func newSlab(objSize uint8, objCount uint) (*slab, error) {
-	bitSet := bitset.New(objCount)
-
-	bitSetDataLen := len(bitSet.Bytes()) * 8
+	bitSetWords := bitSetWordsFor(objCount)
 
 	// 1 byte for the objSize, that's a uint8
 	// sizeOfBitSet is the BitSet, excluding the data used by its data slice
 	// bitSetDataLen is the data used by the BitSets data slice
 	// the object slots take up (object size * object count) bytes
-	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objCount)
+	totalLen := 1 + int(sizeOfBitSet) + (bitSetWords * 8) + int(objSize)*int(objCount)
 	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return nil, err
@@ -74,22 +87,14 @@ func newSlab(objSize uint8, objCount uint) (*slab, error) {
 	// set the objSize property of the new slab
 	data[0] = byte(objSize)
 
-	// create temporary byte slice that accesses bitSet as underlying data,
-	// that way we can read the BitSet like a byte slice
-	var copyFrom []byte
-	copyFromHeader := (*reflect.SliceHeader)(unsafe.Pointer(&copyFrom))
-	copyFromHeader.Data = uintptr(unsafe.Pointer(bitSet))
-	copyFromHeader.Cap = int(sizeOfBitSet)
-	copyFromHeader.Len = int(sizeOfBitSet)
+	// set the bitset's .length property
+	*(*uint)(unsafe.Pointer(&data[1])) = objCount
 
-	// copy the BitSet data structure into memory area at offset 1
-	copy(data[1:], copyFrom)
-
-	// get the byte slice header of BitSets data property
+	// initialize the bitset's .set by setting the slice's cap/len/data
 	bitSetDataSlice := (*reflect.SliceHeader)(unsafe.Pointer(&data[1+offsetOfBitSetData]))
-
-	// set the data pointer to point at the address right after the BitSet instance
-	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+int(sizeOfBitSet)]))
+	bitSetDataSlice.Cap = bitSetWords
+	bitSetDataSlice.Len = bitSetWords
+	bitSetDataSlice.Data = uintptr(unsafe.Pointer(&data[1+sizeOfBitSet]))
 
 	// return the data byte slice converted to a slab pointer
 	return (*slab)(unsafe.Pointer(&data[0])), nil
