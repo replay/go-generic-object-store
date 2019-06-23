@@ -11,19 +11,18 @@ import (
 
 func TestAddingDeletingSlabs(t *testing.T) {
 	objSize := uint8(10)
-	objsPerSlab := uint(1)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 	type objSlab struct {
 		obj  ObjAddr
 		slab SlabAddr
 	}
 	var objs []objSlab
 
-	Convey("When adding 3 times as many objects as there are objects per slab", t, func() {
+	Convey("When adding objects to fill 3 slabs", t, func() {
 		var currentSlab SlabAddr
-		for i := 0; i < int(objsPerSlab)*3; i++ {
+		for i := 0; i < 3; i++ {
 			value := fmt.Sprintf("%010d", i)
-			objAddr, slabAddr, err := sp.add([]byte(value))
+			objAddr, slabAddr, err := sp.add([]byte(value), 1, 1)
 			So(err, ShouldBeNil)
 			if slabAddr > 0 {
 				currentSlab = slabAddr
@@ -71,7 +70,7 @@ func TestAddingGettingManyObjects17(t *testing.T) {
 func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 	objSize := uint8(objSz)
 	objsPerSlab := uint(objsPer)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 	objects := make(map[string]ObjAddr)
 
 	Convey("When generating a set of many test objects", t, func() {
@@ -79,15 +78,12 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 		// generate twice as many test object as there are objects per slab and add them to slabPool
 		for i := 0; i < int(objsPerSlab*2); i++ {
 			value := fmt.Sprintf("%0"+strconv.Itoa(int(objSize))+"d", i)
-			objects[value], _, err = sp.add([]byte(value))
+			objects[value], _, err = sp.add([]byte(value), uint8(objsPerSlab), 1)
 			So(err, ShouldBeNil)
 		}
 
 		Convey("We should be able to retreive each of them and get the correct value back", func() {
 			var returned []byte
-			for i := 0; i < len(sp.slabs); i++ {
-				fmt.Println(sp.slabs[i].String())
-			}
 			for value, obj := range objects {
 				returned = sp.get(obj)
 				So(string(returned), ShouldEqual, value)
@@ -99,14 +95,13 @@ func testAddingGettingManyObjects(t *testing.T, objSz, objsPer int) {
 
 func TestAddingSearchingObject(t *testing.T) {
 	objSize := uint8(5)
-	objsPerSlab := uint(1)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 	testString1 := "abcde"
 	testString2 := "aaaaa"
 	var objAddr1, objAddr2 ObjAddr
 	var success bool
 	Convey("When adding a byte slice to the pool", t, func() {
-		sp.add([]byte(testString1))
+		sp.add([]byte(testString1), 1, 1)
 
 		Convey("we should be able to find it with the search method", func() {
 			objAddr1, success = sp.search([]byte(testString1))
@@ -116,7 +111,7 @@ func TestAddingSearchingObject(t *testing.T) {
 		})
 	})
 	Convey("When adding a second object", t, func() {
-		sp.add([]byte(testString2))
+		sp.add([]byte(testString2), 1, 1)
 
 		Convey("we should also be able to find it", func() {
 			objAddr2, success = sp.search([]byte(testString2))
@@ -131,10 +126,10 @@ func TestAddingSearchingObjectInManySlabs(t *testing.T) {
 	objSize := uint8(5)
 	objsPerSlab := uint(10)
 	expectedSlabs := uint(100)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 	Convey(fmt.Sprintf("When adding %d objects to the pool", objsPerSlab*expectedSlabs), t, func() {
 		for i := uint(0); i < expectedSlabs*objsPerSlab; i++ {
-			objAddr, _, err := sp.add([]byte(fmt.Sprintf("%05d", i)))
+			objAddr, _, err := sp.add([]byte(fmt.Sprintf("%05d", i)), uint8(objsPerSlab), 1)
 			So(err, ShouldBeNil)
 			So(objAddr, ShouldBeGreaterThan, 0)
 		}
@@ -161,11 +156,11 @@ func TestBatchSearchingObjects(t *testing.T) {
 	objSize := uint8(5)
 	objsPerSlab := uint(10)
 	expectedSlabs := uint(100)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 
 	Convey(fmt.Sprintf("When adding %d objects to the pool", objsPerSlab*expectedSlabs), t, func() {
 		for i := uint(0); i < objsPerSlab*expectedSlabs; i++ {
-			sp.add([]byte(fmt.Sprintf("%05d", i)))
+			sp.add([]byte(fmt.Sprintf("%05d", i)), uint8(objsPerSlab), 1)
 		}
 
 		Convey("we should be able to search for them", func() {
@@ -198,7 +193,7 @@ func TestBatchSearchingObjects(t *testing.T) {
 func BenchmarkAddingSearchingObjectInLargePool(b *testing.B) {
 	objSize := uint8(20)
 	objsPerSlab := uint(100)
-	sp := NewSlabPool(objSize, objsPerSlab)
+	sp := NewSlabPool(objSize)
 	type valueAndAddr struct {
 		value []byte
 		addr  ObjAddr
@@ -207,7 +202,7 @@ func BenchmarkAddingSearchingObjectInLargePool(b *testing.B) {
 	testValues := make([]valueAndAddr, valueCount)
 	for i := 0; i < valueCount; i++ {
 		value := []byte(fmt.Sprintf("%20d", i+valueCount))
-		addr, _, err := sp.add([]byte(value))
+		addr, _, err := sp.add([]byte(value), uint8(objsPerSlab), 1)
 		if err != nil {
 			b.Fatalf("Got error on add: %s", err)
 		}

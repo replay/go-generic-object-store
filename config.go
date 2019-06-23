@@ -7,9 +7,8 @@ var Config = NewConfig()
 // Please see the documentation at https://github.com/replay/go-generic-object-store
 // for more information
 type ObjectStoreConfig struct {
-	BaseObjectsPerSlab uint
-	GrowthExponent     float64 // for use with math.Pow this is easier
-	GrowthFactor       float64 // ^^
+	BaseObjectsPerSlab uint8
+	GrowthFactor       float64 // for use with math.Pow this is easier
 }
 
 // NewConfig returns a new object store configuration with
@@ -19,7 +18,6 @@ type ObjectStoreConfig struct {
 func NewConfig() ObjectStoreConfig {
 	return ObjectStoreConfig{
 		BaseObjectsPerSlab: 25,
-		GrowthExponent:     5,
 		GrowthFactor:       1.3,
 	}
 }

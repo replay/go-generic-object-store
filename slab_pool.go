@@ -2,6 +2,7 @@ package gos
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"runtime"
 	"sort"
@@ -16,18 +17,16 @@ import (
 // slabPool is a struct that contains and manages multiple slabs of data
 // all objects in all the slabs must have the same size
 type slabPool struct {
-	slabs       []*slab
-	objSize     uint8
-	objsPerSlab uint
-	freeSlabs   bitset.BitSet
+	slabs     []*slab
+	objSize   uint8
+	freeSlabs bitset.BitSet
 }
 
 // NewSlabPool initializes a new slab pool and returns a pointer to it
-func NewSlabPool(objSize uint8, objsPerSlab uint) *slabPool {
+func NewSlabPool(objSize uint8) *slabPool {
 	return &slabPool{
-		objSize:     objSize,
-		objsPerSlab: objsPerSlab,
-		freeSlabs:   *bitset.New(0),
+		objSize:   objSize,
+		freeSlabs: *bitset.New(0),
 	}
 }
 
@@ -43,7 +42,7 @@ func (s *slabPool) fragStats() float32 {
 	// iterate over all slabs in the pool
 	// get fragmentation percent
 	for _, sl := range s.slabs {
-		total += float32(sl.bitSet().Count()) / float32(sl.objsPerSlab())
+		total += float32(sl.bitSet().Count()) / float32(sl.objCount())
 	}
 
 	return total / length
@@ -69,7 +68,7 @@ func (s *slabPool) memStats() uint64 {
 // The second value is the slab address if the call created a new slab
 // If no new slab has been created, then the second value is 0
 // The third value is nil if there was no error, otherwise it is the error
-func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
+func (s *slabPool) add(obj []byte, baseObjsPerSlab uint8, growthFactor float64) (ObjAddr, SlabAddr, error) {
 	var currentSlab *slab
 	var objIdx uint
 
@@ -92,7 +91,19 @@ func (s *slabPool) add(obj []byte) (ObjAddr, SlabAddr, error) {
 
 	var newSlab SlabAddr
 	if !found {
-		newIdx, err := s.addSlab()
+		// objCount is floor(<base objects per slab> * <growth Factor> ^ <number of slab>)
+		// For Example:
+		// base objects per slab: 10
+		// growth factor: 1.3
+		// slab 0: 10
+		// slab 1: 13
+		// slab 2: 16
+		// slab 3: 21
+		// slab 4: 28
+		// slab 5: 37
+		// slab 6: 48
+		objCount := uint(float64(baseObjsPerSlab) * math.Pow(growthFactor, float64(slabCount)))
+		newIdx, err := s.addSlab(objCount)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -127,13 +138,13 @@ func (s *slabPool) delete(obj ObjAddr, slabAddr SlabAddr) (bool, error) {
 
 	if empty {
 		return s.deleteSlab(slabAddr)
-	} else {
-		// the slab isn't empty, but since we've just deleted an object
-		// we know that there is at least one free slot, so we mark it
-		// accordingly
-		slabIdx := s.findSlabByAddr(slabAddr)
-		s.freeSlabs.Clear(uint(slabIdx))
 	}
+
+	// the slab isn't empty, but since we've just deleted an object
+	// we know that there is at least one free slot, so we mark it
+	// accordingly
+	slabIdx := s.findSlabByAddr(slabAddr)
+	s.freeSlabs.Clear(uint(slabIdx))
 
 	return false, nil
 }
@@ -151,8 +162,8 @@ func (s *slabPool) findSlabByAddr(obj uintptr) int {
 // addSlab adds another slab to the pool and initalizes the related structs
 // on success the first returned value is the index of the new slab
 // on failure the second returned value is the error message
-func (s *slabPool) addSlab() (int, error) {
-	addedSlab, err := newSlab(s.objSize, s.objsPerSlab)
+func (s *slabPool) addSlab(objCount uint) (int, error) {
+	addedSlab, err := newSlab(s.objSize, objCount)
 	if err != nil {
 		return 0, err
 	}
@@ -229,15 +240,14 @@ func (s *slabPool) search(searching []byte) (ObjAddr, bool) {
 
 	for i := 0; i < goMaxProcs; i++ {
 		go func() {
-			//fmt.Println(fmt.Sprintf("starting new routine at slab idx: %d", slabIdx))
 			defer wg.Done()
 
 			for slabIdx := range slabIdxChan {
 				currentSlab := s.slabs[slabIdx]
+				objCount := currentSlab.objCount()
 
 			OBJECT:
-				for objID := uint(0); objID < s.objsPerSlab; objID++ {
-
+				for objID := uint(0); objID < objCount; objID++ {
 					if currentSlab.bitSet().Test(objID) {
 						obj := currentSlab.getObjByIdx(objID)
 						for j := 0; j < objSize; j++ {
@@ -289,9 +299,10 @@ func (s *slabPool) searchBatched(searching [][]byte) []ObjAddr {
 		// every slab gets a go routine which searches for all searched objects
 		go func(currentSlab *slab) {
 			defer wg.Done()
+			objCount := currentSlab.objCount()
 
 			// iterate over objects in slab
-			for j := uint(0); j < s.objsPerSlab; j++ {
+			for j := uint(0); j < objCount; j++ {
 
 				// if the current object slot is in use, then we compare its
 				// value to the searched objects

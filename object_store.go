@@ -19,7 +19,6 @@ type MemStat struct {
 // FragStat stores fragmentation insights about a slab pool
 type FragStat struct {
 	ObjSize     uint8
-	ObjsPerSlab uint
 	FragPercent float32
 }
 
@@ -41,7 +40,7 @@ func (o *ObjectStore) FragStatsByObjSize(size uint8) (float32, error) {
 func (o *ObjectStore) FragStatsPerPool() (fragStats []FragStat) {
 	for _, sl := range o.slabPools {
 		fragPercent := sl.fragStats()
-		fragStats = append(fragStats, FragStat{ObjSize: sl.objSize, ObjsPerSlab: sl.objsPerSlab, FragPercent: fragPercent})
+		fragStats = append(fragStats, FragStat{ObjSize: sl.objSize, FragPercent: fragPercent})
 	}
 	return fragStats
 }
@@ -175,7 +174,7 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 	// try to add the object to the pool
 	// there is potential for an error because this involves memory allocations
 	var err error
-	oAddr, sAddr, err = pool.add(obj)
+	oAddr, sAddr, err = pool.add(obj, o.config.BaseObjectsPerSlab, o.config.GrowthFactor)
 	if err != nil {
 		return 0, err
 	}
@@ -195,7 +194,7 @@ func (o *ObjectStore) Add(obj []byte) (ObjAddr, error) {
 
 // addSlabPool adds a slab pool of the specified size to this object store
 func (o *ObjectStore) addSlabPool(size uint8) {
-	o.slabPools[size] = NewSlabPool(size, o.config.BaseObjectsPerSlab)
+	o.slabPools[size] = NewSlabPool(size)
 }
 
 // Search searches for the given value in the accordingly sized slab pool

@@ -37,6 +37,7 @@ func (s *slab) String() string {
 	fmt.Fprintf(&b, "-------------------------------\n")
 	fmt.Fprintf(&b, "Slab Addr: %d\n", uintptr(unsafe.Pointer(s)))
 	fmt.Fprintf(&b, "Object Size: %d\n", objSize)
+	fmt.Fprintf(&b, "Object Count: %d\n", s.objCount())
 	fmt.Fprintf(&b, "Objects Per Slab: %d\n", bitSetLen)
 
 	for i := 0; i < len(bitSetBytes); i++ {
@@ -55,8 +56,8 @@ func (s *slab) String() string {
 // On success the first return value is a pointer to the new slab and the
 // second value is nil
 // On failure the second returned value is an error
-func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
-	bitSet := bitset.New(objsPerSlab)
+func newSlab(objSize uint8, objCount uint) (*slab, error) {
+	bitSet := bitset.New(objCount)
 
 	bitSetDataLen := len(bitSet.Bytes()) * 8
 
@@ -64,7 +65,7 @@ func newSlab(objSize uint8, objsPerSlab uint) (*slab, error) {
 	// sizeOfBitSet is the BitSet, excluding the data used by its data slice
 	// bitSetDataLen is the data used by the BitSets data slice
 	// the object slots take up (object size * object count) bytes
-	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objsPerSlab)
+	totalLen := 1 + int(sizeOfBitSet) + bitSetDataLen + int(objSize)*int(objCount)
 	data, err := syscall.Mmap(-1, 0, totalLen, syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_ANON|syscall.MAP_PRIVATE)
 	if err != nil {
 		return nil, err
@@ -104,14 +105,14 @@ func (s *slab) bitSet() *bitset.BitSet {
 	return (*bitset.BitSet)(unsafe.Pointer(uintptr(unsafe.Pointer(s)) + 1))
 }
 
-// objsPerSlab returns the max number of objects each slab can contain
-func (s *slab) objsPerSlab() uint {
+// objCount returns the max number of objects each slab can contain
+func (s *slab) objCount() uint {
 	return s.bitSet().Len()
 }
 
 // getTotalLength returns the total size of this slab in bytes
 func (s *slab) getTotalLength() uintptr {
-	return s.getDataOffset() + uintptr(s.objSize)*uintptr(s.objsPerSlab())
+	return s.getDataOffset() + uintptr(s.objSize)*uintptr(s.objCount())
 }
 
 // getDataOffset returns the offset at which the stored objects start
