@@ -14,11 +14,11 @@ func TestNewSlab(t *testing.T) {
 func TestSlabBitset(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
-		objsPerSlab := uint(10000)
-		slab, err := newSlab(objSize, objsPerSlab)
+		objCount := uint(10000)
+		slab, err := newSlab(objSize, objCount)
 		So(err, ShouldBeNil)
 		So(slab.objSize, ShouldEqual, objSize)
-		So(slab.objsPerSlab(), ShouldEqual, objsPerSlab)
+		So(slab.objCount(), ShouldEqual, objCount)
 		Convey("we should be able to obtain and use the bitset from it", func() {
 			bitSet1 := slab.bitSet()
 			bitSet1.Set(2)
@@ -44,8 +44,8 @@ func TestSlabBitset(t *testing.T) {
 func TestSettingGettingObjects(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
-		objsPerSlab := uint(100)
-		slab, err := newSlab(objSize, objsPerSlab)
+		objCount := uint(100)
+		slab, err := newSlab(objSize, objCount)
 		So(err, ShouldBeNil)
 
 		Convey("we should be able to set an object", func() {
@@ -64,16 +64,16 @@ func TestSettingGettingObjects(t *testing.T) {
 func TestSettingGettingManyObjects(t *testing.T) {
 	Convey("When creating a new slab", t, func() {
 		objSize := uint8(5)
-		objsPerSlab := uint(100)
-		slab, err := newSlab(objSize, objsPerSlab)
+		objCount := uint(100)
+		slab, err := newSlab(objSize, objCount)
 		var objAddresses []ObjAddr
 		So(err, ShouldBeNil)
 
 		Convey("we should be able to fill it up with objects", func() {
-			for i := uint(0); i < objsPerSlab; i++ {
+			for i := uint(0); i < objCount; i++ {
 				value := fmt.Sprintf("%05d", i)
 				objAddr, full, success := slab.addObj([]byte(value), i)
-				if i == objsPerSlab-1 {
+				if i == objCount-1 {
 					So(full, ShouldBeTrue)
 				} else {
 					So(full, ShouldBeFalse)
@@ -83,7 +83,7 @@ func TestSettingGettingManyObjects(t *testing.T) {
 			}
 
 			Convey("and retreive all of them again", func() {
-				for i := uint(0); i < objsPerSlab; i++ {
+				for i := uint(0); i < objCount; i++ {
 					obtainedValue := objFromObjAddr(objAddresses[i], objSize)
 					So(string(obtainedValue), ShouldEqual, fmt.Sprintf("%05d", i))
 				}
