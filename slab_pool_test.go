@@ -45,27 +45,27 @@ func TestAddingDeletingSlabs(t *testing.T) {
 	})
 }
 
-func TestAddingGettingManyObjects8(t *testing.T) {
+func TestAddingGettingManyObjects8DefaultGrowthSettings(t *testing.T) {
 	testAddingGettingManyObjects(t, 8, 10, 1.3)
 }
 
-func TestAddingGettingManyObjects10(t *testing.T) {
+func TestAddingGettingManyObjects10GrowingVeryFast(t *testing.T) {
 	testAddingGettingManyObjects(t, 10, 10, 100)
 }
 
-func TestAddingGettingManyObjects13(t *testing.T) {
+func TestAddingGettingManyObjects13LowBaseObjCountAndNoGrowth(t *testing.T) {
 	testAddingGettingManyObjects(t, 13, 2, 1)
 }
 
-func TestAddingGettingManyObjects15(t *testing.T) {
+func TestAddingGettingManyObjects15HighBaseObjCountAndFastGrowth(t *testing.T) {
 	testAddingGettingManyObjects(t, 15, 100, 2)
 }
 
-func TestAddingGettingManyObjects16(t *testing.T) {
+func TestAddingGettingManyObjects16LowBaseObjCountWithFastGrowth(t *testing.T) {
 	testAddingGettingManyObjects(t, 16, 2, 3)
 }
 
-func TestAddingGettingManyObjects17(t *testing.T) {
+func TestAddingGettingManyObjects17NormalBaseObjCountGrowingVeryFast(t *testing.T) {
 	testAddingGettingManyObjects(t, 17, 10, 4)
 }
 
